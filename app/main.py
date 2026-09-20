@@ -62,6 +62,44 @@ def create_app() -> FastAPI:
     # Mount health router at root /health for simple container healthchecks
     app.include_router(root_health_router, tags=["Health"])
 
+    # Mount metrics router at root /metrics
+    from app.api.routes.metrics import router as root_metrics_router
+    app.include_router(root_metrics_router, tags=["Metrics"])
+
+    # API Rate Limiting Middleware
+    from app.services.rate_limiter import get_rate_limiter
+    from app.services.metrics_service import MetricsService
+
+    @app.middleware("http")
+    async def rate_limiting_middleware(request: Request, call_next):
+        path = request.url.path
+        # Whitelist health, metrics, and docs from strict rate limiting
+        if path in ("/health", "/metrics", "/api/v1/health", "/api/v1/metrics", "/docs", "/openapi.json"):
+            return await call_next(request)
+
+        client_ip = request.headers.get("x-forwarded-for")
+        if client_ip:
+            client_ip = client_ip.split(",")[0].strip()
+        elif request.client:
+            client_ip = request.client.host
+        else:
+            client_ip = "127.0.0.1"
+
+        rate_limiter = get_rate_limiter()
+        is_limited, retry_after = await rate_limiter.check_api_rate_limit(client_ip)
+        if is_limited:
+            MetricsService.record_rate_limit_hit()
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "error": "Rate limit exceeded",
+                    "message": "Too many requests. Please try again later.",
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        return await call_next(request)
+
     # Mount API v1 router
     app.include_router(api_v1_router)
 

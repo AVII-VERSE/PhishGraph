@@ -3,9 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db.models.user import User
 from app.db.models.watch import Watch
 from app.logging import get_logger
@@ -65,6 +66,27 @@ class WatchService:
         existing = res.scalar_one_or_none()
 
         now = datetime.now(timezone.utc)
+        if existing and existing.active:
+            existing.interval_hours = interval_hours
+            existing.url = normalized_url
+            existing.next_scan_at = now + timedelta(hours=interval_hours)
+            await session.commit()
+            await session.refresh(existing)
+            logger.info("Updated active watch on %s for user %s", domain, user_id)
+            return existing
+
+        # Enforce watchlist quota per user (Section 39)
+        settings = get_settings()
+        count_stmt = select(func.count(Watch.id)).where(
+            Watch.user_id == user_id,
+            Watch.active.is_(True),
+        )
+        active_count = (await session.execute(count_stmt)).scalar() or 0
+        if active_count >= settings.MAX_WATCHLIST_ENTRIES_PER_USER:
+            raise ValueError(
+                f"Watchlist quota exceeded (maximum {settings.MAX_WATCHLIST_ENTRIES_PER_USER} entries allowed)."
+            )
+
         if existing:
             existing.active = True
             existing.interval_hours = interval_hours
