@@ -88,12 +88,21 @@ async def test_create_and_execute_scan(db_session: AsyncSession):
     assert scan.status == "pending"
 
     # Execute scan with allow_private_in_testing for mock domain
-    completed_scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results = (
-        await ScanService.execute_scan(
-            session=db_session,
-            scan_id=scan.id,
-            allow_private_in_testing=True,
-        )
+    (
+        completed_scan,
+        heuristics,
+        dns_res,
+        rdap_res,
+        tls_res,
+        redir_res,
+        ti_results,
+        brand_res,
+        puny_res,
+        risk_res,
+    ) = await ScanService.execute_scan(
+        session=db_session,
+        scan_id=scan.id,
+        allow_private_in_testing=True,
     )
     assert completed_scan.status == "completed"
     assert completed_scan.risk_score is not None
@@ -102,3 +111,6 @@ async def test_create_and_execute_scan(db_session: AsyncSession):
     assert heuristics is not None
     assert heuristics.hostname == "paypa1-update.test"
     assert isinstance(ti_results, list)
+    assert brand_res.has_brand_impersonation is True
+    assert brand_res.top_matched_brand == "paypal"
+    assert risk_res.risk_score > 0

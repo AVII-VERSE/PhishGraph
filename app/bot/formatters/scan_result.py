@@ -1,12 +1,15 @@
 """Telegram message formatters adhering to PhishGraph design specification."""
 
 from typing import List, Optional
+from app.analyzers.brand_analyzer import BrandImpersonationResult
 from app.analyzers.dns_analyzer import DNSAnalysisResult
 from app.analyzers.domain_analyzer import DomainIntelligenceResult
+from app.analyzers.punycode_analyzer import PunycodeAnalysisResult
 from app.analyzers.redirect_analyzer import RedirectChainResult
 from app.analyzers.tls_analyzer import TLSAnalysisResult
 from app.analyzers.url_analyzer import URLFeatures
 from app.db.models.scan import Scan
+from app.scoring.risk_engine import RiskAssessmentResult
 from app.threat_intel.base import ThreatIntelResult
 
 
@@ -22,7 +25,8 @@ def format_start_message() -> str:
         "• TLS metadata\n"
         "• Safe redirects\n"
         "• Threat intelligence feeds\n"
-        "• Brand impersonation\n"
+        "• Brand impersonation & typosquatting\n"
+        "• Punycode / homoglyphs\n"
         "• Related infrastructure\n"
         "• Historical risk changes\n\n"
         "Use /help for commands."
@@ -72,8 +76,11 @@ def format_scan_result(
     tls_res: Optional[TLSAnalysisResult] = None,
     redir_res: Optional[RedirectChainResult] = None,
     ti_results: Optional[List[ThreatIntelResult]] = None,
+    brand_res: Optional[BrandImpersonationResult] = None,
+    puny_res: Optional[PunycodeAnalysisResult] = None,
+    risk_res: Optional[RiskAssessmentResult] = None,
 ) -> str:
-    """Format completed scan report for Telegram adhering to Section 5.1 & 42 of spec."""
+    """Format completed scan report for Telegram adhering to Section 5.1, 14 & 42 of spec."""
     risk_emoji = "🟢"
     if scan.risk_level == "CRITICAL":
         risk_emoji = "🚨"
@@ -96,6 +103,16 @@ def format_scan_result(
         "────────────────────",
     ]
 
+    # Brand / Impersonation Alert
+    if brand_res and brand_res.has_brand_impersonation:
+        sections.append("*Brand & Impersonation Signals:*")
+        for match in brand_res.matches:
+            if not match.is_official_domain:
+                sections.append(
+                    f"⚠️ Possible impersonation: *{match.brand_name.capitalize()}* (similarity: {match.similarity_score})"
+                )
+        sections.append("────────────────────")
+
     # Threat Intelligence Highlights
     ti_hits = [ti for ti in (ti_results or []) if ti.is_positive]
     if ti_hits:
@@ -110,6 +127,8 @@ def format_scan_result(
     findings: list[str] = []
     if heuristics:
         findings.extend([f"⚠️ {s}" for s in heuristics.heuristic_signals])
+    if puny_res and puny_res.signals:
+        findings.extend([f"⚠️ {s}" for s in puny_res.signals])
     if rdap_res:
         findings.extend([f"⚠️ {s}" for s in rdap_res.signals])
     if tls_res:
@@ -142,6 +161,13 @@ def format_scan_result(
 
     if len(infra_lines) > 1:
         sections.extend(infra_lines)
+        sections.append("────────────────────")
+
+    # Explainable Risk Breakdown ("Why this score?")
+    if risk_res and risk_res.factors:
+        sections.append("*Why this score?*")
+        for f in risk_res.factors[:5]:
+            sections.append(f"• `+{int(f.weight)}` {f.factor_description}")
         sections.append("────────────────────")
 
     sections.append("_Assessment based on observed indicators. Avoid submitting credentials unless verified._")

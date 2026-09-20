@@ -9,19 +9,24 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.analyzers.brand_analyzer import BrandAnalyzer, BrandImpersonationResult
 from app.analyzers.dns_analyzer import DNSAnalysisResult, analyze_dns
 from app.analyzers.domain_analyzer import DomainIntelligenceResult, analyze_domain_rdap
+from app.analyzers.punycode_analyzer import PunycodeAnalysisResult, analyze_punycode_and_homographs
 from app.analyzers.redirect_analyzer import RedirectChainResult, trace_redirect_chain
 from app.analyzers.tls_analyzer import TLSAnalysisResult, inspect_tls
 from app.analyzers.url_analyzer import URLFeatures, analyze_url_heuristics
 from app.db.models.dns_record import DNSRecord
 from app.db.models.domain import Domain
 from app.db.models.redirect import RedirectRecord
+from app.db.models.risk_factor import ScanRiskFactor
 from app.db.models.scan import Scan
 from app.db.models.threat_intel import ThreatIntelRecord
 from app.db.models.tls_record import TLSRecord
 from app.db.models.user import User
 from app.logging import get_logger, scan_id_ctx, user_id_ctx
+from app.scoring.confidence_engine import calculate_confidence_score
+from app.scoring.risk_engine import RiskAssessmentResult, calculate_risk_score
 from app.security.url_safety import validate_url_safety
 from app.threat_intel.aggregator import ThreatIntelAggregator
 from app.threat_intel.base import ThreatIntelResult
@@ -154,6 +159,7 @@ class ScanService:
         scan_id: int,
         allow_private_in_testing: bool = False,
         threat_aggregator: Optional[ThreatIntelAggregator] = None,
+        brand_analyzer: Optional[BrandAnalyzer] = None,
     ) -> Tuple[
         Scan,
         URLFeatures,
@@ -162,8 +168,11 @@ class ScanService:
         Optional[TLSAnalysisResult],
         Optional[RedirectChainResult],
         List[ThreatIntelResult],
+        BrandImpersonationResult,
+        PunycodeAnalysisResult,
+        RiskAssessmentResult,
     ]:
-        """Execute Phase 3 multi-analyzer & threat intelligence pipeline."""
+        """Execute Phase 4/5 full analysis, brand spoof detection, and explainable scoring."""
         stmt = select(Scan).where(Scan.id == scan_id)
         result = await session.execute(stmt)
         scan = result.scalar_one_or_none()
@@ -177,8 +186,11 @@ class ScanService:
             scan.status = "in_progress"
             await session.commit()
 
-            # 1. URL Heuristics
+            # 1. URL Heuristics, Punycode & Brand Analysis
             heuristics = analyze_url_heuristics(scan.normalized_url)
+            puny_res = analyze_punycode_and_homographs(scan.domain)
+            brand_engine = brand_analyzer or BrandAnalyzer()
+            brand_res = brand_engine.analyze_domain(scan.domain)
 
             # 2. SSRF Check
             is_safe, ssrf_reason, resolved_ips = await validate_url_safety(
@@ -193,15 +205,32 @@ class ScanService:
             ti_results: List[ThreatIntelResult] = []
 
             if not is_safe:
-                scan.risk_score = 90.0
-                scan.risk_level = "CRITICAL"
+                # SSRF blocked -> Immediate critical risk
+                risk_res = RiskAssessmentResult(
+                    risk_score=95.0,
+                    risk_level="CRITICAL",
+                    factors=[],
+                )
+                scan.risk_score = risk_res.risk_score
+                scan.risk_level = risk_res.risk_level
                 scan.confidence_score = 95.0
                 scan.status = "completed"
                 scan.completed_at = datetime.now(timezone.utc)
                 await session.commit()
-                return scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results
+                return (
+                    scan,
+                    heuristics,
+                    dns_res,
+                    rdap_res,
+                    tls_res,
+                    redir_res,
+                    ti_results,
+                    brand_res,
+                    puny_res,
+                    risk_res,
+                )
 
-            # 3. Asynchronous Analysis & Threat Intelligence Gathering
+            # 3. Asynchronous Multi-Analyzer Gathering
             aggregator = threat_aggregator or ThreatIntelAggregator()
 
             dns_task = analyze_dns(scan.domain)
@@ -297,81 +326,63 @@ class ScanService:
                         )
                     )
 
-            # 4. Composite Risk & Confidence Engine
-            risk_score = 0.0
-            confidence = 30.0
+            # 4. Explainable Scoring Engine
+            risk_res = calculate_risk_score(
+                heuristics=heuristics,
+                dns_res=dns_res,
+                rdap_res=rdap_res,
+                tls_res=tls_res,
+                redir_res=redir_res,
+                ti_results=ti_results,
+                brand_res=brand_res,
+                puny_res=puny_res,
+            )
 
-            # Threat Intel signals (strongest weighting per Section 14)
-            positive_ti_count = sum(1 for ti in ti_results if ti.malicious)
-            suspicious_ti_count = sum(1 for ti in ti_results if ti.suspicious and not ti.malicious)
+            confidence_score = calculate_confidence_score(
+                dns_res=dns_res,
+                rdap_res=rdap_res,
+                tls_res=tls_res,
+                redir_res=redir_res,
+                ti_results=ti_results,
+            )
 
-            if positive_ti_count >= 1:
-                risk_score += 35.0 + min(30.0, (positive_ti_count - 1) * 15.0)
-                confidence += 35.0
-            elif suspicious_ti_count >= 1:
-                risk_score += 20.0
-                confidence += 20.0
+            # Persist Risk Factors for transparency & auditability
+            for f in risk_res.factors:
+                session.add(
+                    ScanRiskFactor(
+                        scan_id=scan.id,
+                        factor_code=f.factor_code,
+                        factor_description=f.factor_description,
+                        weight=f.weight,
+                        evidence_source=f.evidence_source,
+                    )
+                )
 
-            # Heuristics
-            if heuristics.is_ip_hostname:
-                risk_score += 15.0
-            if heuristics.has_at_symbol:
-                risk_score += 15.0
-            if heuristics.has_double_slash_in_path:
-                risk_score += 10.0
-            if heuristics.has_punycode:
-                risk_score += 15.0
-            if len(heuristics.suspicious_keywords_found) >= 2:
-                risk_score += 15.0
-            elif len(heuristics.suspicious_keywords_found) == 1:
-                risk_score += 8.0
-            if heuristics.path_entropy > 4.2:
-                risk_score += 5.0
-
-            # Domain age
-            if rdap_res and rdap_res.recently_registered:
-                risk_score += 18.0
-                confidence += 15.0
-
-            # TLS
-            if tls_res:
-                confidence += 10.0
-                if tls_res.is_self_signed:
-                    risk_score += 12.0
-                if tls_res.is_expired:
-                    risk_score += 10.0
-                if not tls_res.hostname_matches and tls_res.https_available:
-                    risk_score += 12.0
-
-            # Redirects
-            if redir_res:
-                confidence += 10.0
-                if redir_res.cross_domain_redirects >= 2:
-                    risk_score += 12.0
-                elif redir_res.cross_domain_redirects == 1:
-                    risk_score += 6.0
-
-            risk_score = min(100.0, risk_score)
-            confidence = min(100.0, confidence)
-
-            scan.risk_score = risk_score
-            scan.confidence_score = confidence
-            if risk_score >= 75:
-                scan.risk_level = "CRITICAL"
-            elif risk_score >= 50:
-                scan.risk_level = "HIGH"
-            elif risk_score >= 25:
-                scan.risk_level = "MODERATE"
-            else:
-                scan.risk_level = "LOW"
-
+            scan.risk_score = risk_res.risk_score
+            scan.risk_level = risk_res.risk_level
+            scan.confidence_score = confidence_score
             scan.status = "completed"
             scan.completed_at = datetime.now(timezone.utc)
 
             await session.commit()
             await session.refresh(scan)
-            logger.info(f"Scan {scan.scan_uuid} complete: risk={scan.risk_score}, level={scan.risk_level}")
-            return scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results
+            logger.info(
+                f"Scan {scan.scan_uuid} complete: risk={scan.risk_score} ({scan.risk_level}), "
+                f"confidence={scan.confidence_score}, factors={len(risk_res.factors)}"
+            )
+
+            return (
+                scan,
+                heuristics,
+                dns_res,
+                rdap_res,
+                tls_res,
+                redir_res,
+                ti_results,
+                brand_res,
+                puny_res,
+                risk_res,
+            )
 
         except Exception as exc:
             scan.status = "failed"

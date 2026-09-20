@@ -1,0 +1,20 @@
+{
+  "paypal": ["paypal.com", "paypal-communication.com", "paypal-corp.com"],
+  "google": ["google.com", "gmail.com", "google.co.uk", "google.de", "youtube.com"],
+  "microsoft": ["microsoft.com", "live.com", "office.com", "outlook.com", "microsoftonline.com", "azure.com"],
+  "apple": ["apple.com", "icloud.com"],
+  "amazon": ["amazon.com", "amazon.co.uk", "amazon.de", "aws.amazon.com"],
+  "netflix": ["netflix.com"],
+  "facebook": ["facebook.com", "meta.com", "fb.com"],
+  "instagram": ["instagram.com"],
+  "whatsapp": ["whatsapp.com"],
+  "telegram": ["telegram.org", "t.me"],
+  "chase": ["chase.com"],
+  "bankofamerica": ["bankofamerica.com", "bofa.com"],
+  "wellsfargo": ["wellsfargo.com"],
+  "binance": ["binance.com"],
+  "coinbase": ["coinbase.com"],
+  "steam": ["steampowered.com", "steamcommunity.com"],
+  "dhl": ["dhl.com"],
+  "fedex": ["fedex.com"]
+}
