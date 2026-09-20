@@ -31,7 +31,15 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     if not bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN is not configured in environment or .env file.")
 
-    app = ApplicationBuilder().token(bot_token).build()
+    from telegram.request import HTTPXRequest
+    request_client = HTTPXRequest(
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+    )
+
+    app = ApplicationBuilder().token(bot_token).request(request_client).build()
 
     # Register Command Handlers
     app.add_handler(CommandHandler("start", start_handler))
