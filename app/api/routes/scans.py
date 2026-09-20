@@ -67,3 +67,23 @@ async def get_scan_pdf(scan_uuid: str) -> Response:
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename=PhishGraph_{scan_uuid}.pdf"},
         )
+
+
+@router.get(
+    "/{scan_uuid}/graph",
+    summary="Get Campaign Graph JSON",
+    description="Returns Cytoscape.js compatible graph nodes and edges representing infrastructure relationships.",
+)
+async def get_scan_graph(scan_uuid: str) -> Dict[str, Any]:
+    from app.services.graph_service import CampaignGraphService
+
+    session_factory = async_session_factory()
+    async with session_factory() as session:
+        details = await ScanService.get_scan_full_details(session, scan_uuid)
+        if not details:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Scan with ID '{scan_uuid}' was not found.",
+            )
+        return CampaignGraphService.build_scan_graph(details)
+
