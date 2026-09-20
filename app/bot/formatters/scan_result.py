@@ -8,6 +8,7 @@ from app.analyzers.punycode_analyzer import PunycodeAnalysisResult
 from app.analyzers.redirect_analyzer import RedirectChainResult
 from app.analyzers.tls_analyzer import TLSAnalysisResult
 from app.analyzers.url_analyzer import URLFeatures
+from app.correlation.correlation_engine import CorrelationResult
 from app.db.models.scan import Scan
 from app.scoring.risk_engine import RiskAssessmentResult
 from app.threat_intel.base import ThreatIntelResult
@@ -79,8 +80,9 @@ def format_scan_result(
     brand_res: Optional[BrandImpersonationResult] = None,
     puny_res: Optional[PunycodeAnalysisResult] = None,
     risk_res: Optional[RiskAssessmentResult] = None,
+    correlation_res: Optional[CorrelationResult] = None,
 ) -> str:
-    """Format completed scan report for Telegram adhering to Section 5.1, 14 & 42 of spec."""
+    """Format completed scan report for Telegram adhering to Section 5.1, 13, 14 & 42 of spec."""
     risk_emoji = "🟢"
     if scan.risk_level == "CRITICAL":
         risk_emoji = "🚨"
@@ -121,6 +123,29 @@ def format_scan_result(
             status_desc = "MALICIOUS" if ti.malicious else "SUSPICIOUS"
             lbl = f" — {', '.join(ti.labels[:2])}" if ti.labels else ""
             sections.append(f"• *{ti.provider.upper()}:* {status_desc}{lbl}")
+        sections.append("────────────────────")
+
+    # Campaign Correlation
+    if correlation_res and correlation_res.matches:
+        sections.append("*🕸 CAMPAIGN CORRELATION*")
+        cnt = len(correlation_res.matches)
+        plural = "domain" if cnt == 1 else "domains"
+        sections.append(f"_{cnt} potentially related {plural} observed:_\n")
+        rel_descriptions = {
+            "SAME_FAVICON_HASH": "Same favicon hash",
+            "SAME_TLS_SERIAL": "Same TLS certificate serial",
+            "SAME_REDIRECT_TARGET": "Same redirect target",
+            "SAME_NAMESERVER": "Same nameserver",
+            "SAME_IP": "Same IP address",
+            "SAME_ASN": "Same ASN",
+            "SAME_REGISTRAR": "Same registrar",
+            "SAME_BRAND_TARGET": "Same targeted brand",
+        }
+        for match in correlation_res.matches[:3]:
+            sections.append(f"`{match.related_domain}` *(Correlation: {match.score}/100)*")
+            for rel in match.relations[:3]:
+                sections.append(f"• {rel_descriptions.get(rel, rel)}")
+            sections.append("")
         sections.append("────────────────────")
 
     # Key Findings / Alerts
