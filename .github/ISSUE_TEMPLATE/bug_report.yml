@@ -1,0 +1,35 @@
+name: Bug Report
+description: Create a report to help us improve PhishGraph
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue in PhishGraph!
+  - type: input
+    id: scan_id
+    attributes:
+      label: Scan ID (if applicable)
+      description: e.g. SCAN-2026-000123
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant logs here (make sure NO secrets/tokens are included).
+      render: shell
