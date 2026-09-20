@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     ENABLE_WATCHLIST: bool = True
     ENABLE_PDF_REPORTS: bool = True
 
+    # Rate Limiting & Quotas (Section 39)
+    RATE_LIMIT_SCANS_PER_WINDOW: int = Field(default=10, ge=1)
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(default=600, ge=10)  # 10 minutes
+    MAX_WATCHLIST_ENTRIES_PER_USER: int = Field(default=10, ge=1)
+    MAX_URL_LENGTH: int = Field(default=2048, ge=64, le=8192)
+
     @property
     def is_sqlite(self) -> bool:
         """Return True if using SQLite database."""
