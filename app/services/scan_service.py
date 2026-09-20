@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -466,3 +466,133 @@ class ScanService:
             user_id_ctx.reset(token_user)
 
     execute_mvp_scan = execute_scan
+
+    @staticmethod
+    async def get_user_scans(
+        session: AsyncSession,
+        telegram_user_id: int,
+        limit: int = 10,
+    ) -> List[Scan]:
+        """Fetch recent scans executed by a specific Telegram user."""
+        user_stmt = select(User).where(User.telegram_user_id == telegram_user_id)
+        u_res = await session.execute(user_stmt)
+        user = u_res.scalar_one_or_none()
+        if not user:
+            return []
+
+        stmt = (
+            select(Scan)
+            .where(Scan.user_id == user.id)
+            .order_by(Scan.id.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_scan_full_details(
+        session: AsyncSession,
+        scan_uuid: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve full scan details and child records for reporting."""
+        stmt = select(Scan).where(Scan.scan_uuid == scan_uuid)
+        res = await session.execute(stmt)
+        scan = res.scalar_one_or_none()
+        if not scan:
+            return None
+
+        # Query child records
+        dns_stmt = select(DNSRecord).where(DNSRecord.scan_id == scan.id)
+        dns_records = (await session.execute(dns_stmt)).scalars().all()
+
+        tls_stmt = select(TLSRecord).where(TLSRecord.scan_id == scan.id)
+        tls_record = (await session.execute(tls_stmt)).scalar_one_or_none()
+
+        redir_stmt = select(RedirectRecord).where(RedirectRecord.scan_id == scan.id)
+        redirects = (await session.execute(redir_stmt)).scalars().all()
+
+        ti_stmt = select(ThreatIntelRecord).where(ThreatIntelRecord.scan_id == scan.id)
+        threat_intel = (await session.execute(ti_stmt)).scalars().all()
+
+        rf_stmt = select(ScanRiskFactor).where(ScanRiskFactor.scan_id == scan.id)
+        risk_factors = (await session.execute(rf_stmt)).scalars().all()
+
+        fp_stmt = select(Fingerprint).where(Fingerprint.scan_id == scan.id)
+        fingerprint = (await session.execute(fp_stmt)).scalar_one_or_none()
+
+        corr_stmt = select(Correlation).where(Correlation.source_scan_id == scan.id)
+        correlations = (await session.execute(corr_stmt)).scalars().all()
+
+        return {
+            "scan": {
+                "id": scan.id,
+                "scan_uuid": scan.scan_uuid,
+                "original_url": scan.original_url,
+                "domain": scan.domain,
+                "status": scan.status,
+                "risk_score": scan.risk_score,
+                "risk_level": scan.risk_level,
+                "confidence_score": scan.confidence_score,
+                "created_at": scan.created_at.isoformat() if scan.created_at else None,
+                "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+            },
+            "dns_records": [
+                {
+                    "record_type": r.record_type,
+                    "name": r.name,
+                    "value": r.value,
+                    "ttl": r.ttl,
+                }
+                for r in dns_records
+            ],
+            "tls_record": {
+                "issuer": tls_record.issuer,
+                "subject": tls_record.subject,
+                "serial_number": tls_record.serial_number,
+                "tls_version": tls_record.tls_version,
+            }
+            if tls_record
+            else None,
+            "redirects": [
+                {
+                    "hop_number": h.hop_number,
+                    "source_url": h.source_url,
+                    "destination_url": h.destination_url,
+                    "status_code": h.status_code,
+                }
+                for h in redirects
+            ],
+            "threat_intel": [
+                {
+                    "provider": ti.provider,
+                    "provider_status": ti.provider_status,
+                    "provider_score": ti.provider_score,
+                    "labels": ti.labels,
+                }
+                for ti in threat_intel
+            ],
+            "risk_factors": [
+                {
+                    "factor_code": rf.factor_code,
+                    "factor_description": rf.factor_description,
+                    "weight": rf.weight,
+                    "evidence_source": rf.evidence_source,
+                }
+                for rf in risk_factors
+            ],
+            "fingerprint": {
+                "asn": fingerprint.asn,
+                "registrar": fingerprint.registrar,
+                "favicon_hash": fingerprint.favicon_hash,
+            }
+            if fingerprint
+            else None,
+            "correlations": [
+                {
+                    "target_scan_id": c.target_scan_id,
+                    "correlation_score": c.correlation_score,
+                    "relationship_types": c.relationship_types,
+                }
+                for c in correlations
+            ],
+        }
