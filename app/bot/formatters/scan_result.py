@@ -1,12 +1,13 @@
 """Telegram message formatters adhering to PhishGraph design specification."""
 
-from typing import Optional
+from typing import List, Optional
 from app.analyzers.dns_analyzer import DNSAnalysisResult
 from app.analyzers.domain_analyzer import DomainIntelligenceResult
 from app.analyzers.redirect_analyzer import RedirectChainResult
 from app.analyzers.tls_analyzer import TLSAnalysisResult
 from app.analyzers.url_analyzer import URLFeatures
 from app.db.models.scan import Scan
+from app.threat_intel.base import ThreatIntelResult
 
 
 def format_start_message() -> str:
@@ -20,7 +21,7 @@ def format_start_message() -> str:
         "• DNS\n"
         "• TLS metadata\n"
         "• Safe redirects\n"
-        "• Threat intelligence\n"
+        "• Threat intelligence feeds\n"
         "• Brand impersonation\n"
         "• Related infrastructure\n"
         "• Historical risk changes\n\n"
@@ -57,7 +58,7 @@ def format_progress_message(scan_uuid: str, domain: str) -> str:
         "• DNS\n"
         "• TLS\n"
         "• Redirects\n"
-        "• Threat intelligence\n"
+        "• Threat intelligence feeds\n"
         "• Brand similarity\n"
         "• Infrastructure correlation"
     )
@@ -70,6 +71,7 @@ def format_scan_result(
     rdap_res: Optional[DomainIntelligenceResult] = None,
     tls_res: Optional[TLSAnalysisResult] = None,
     redir_res: Optional[RedirectChainResult] = None,
+    ti_results: Optional[List[ThreatIntelResult]] = None,
 ) -> str:
     """Format completed scan report for Telegram adhering to Section 5.1 & 42 of spec."""
     risk_emoji = "🟢"
@@ -93,6 +95,16 @@ def format_scan_result(
         f"*Evidence Confidence:* {conf_score_str}",
         "────────────────────",
     ]
+
+    # Threat Intelligence Highlights
+    ti_hits = [ti for ti in (ti_results or []) if ti.is_positive]
+    if ti_hits:
+        sections.append("*Threat Intelligence:*")
+        for ti in ti_hits:
+            status_desc = "MALICIOUS" if ti.malicious else "SUSPICIOUS"
+            lbl = f" — {', '.join(ti.labels[:2])}" if ti.labels else ""
+            sections.append(f"• *{ti.provider.upper()}:* {status_desc}{lbl}")
+        sections.append("────────────────────")
 
     # Key Findings / Alerts
     findings: list[str] = []
