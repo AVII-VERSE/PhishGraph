@@ -52,9 +52,19 @@ async def process_target_url(update: Update, target_url: str) -> None:
         )
 
         try:
-            # Execute scan
-            completed_scan = await ScanService.execute_mvp_scan(session=session, scan_id=scan.id)
-            result_text = format_scan_result(completed_scan)
+            # Execute Phase 2 scan pipeline
+            scan, heuristics, dns_res, rdap_res, tls_res, redir_res = (
+                await ScanService.execute_scan(session=session, scan_id=scan.id)
+            )
+
+            result_text = format_scan_result(
+                scan=scan,
+                heuristics=heuristics,
+                dns_res=dns_res,
+                rdap_res=rdap_res,
+                tls_res=tls_res,
+                redir_res=redir_res,
+            )
 
             # Edit progress message in place as specified in Section 18
             try:
@@ -94,7 +104,6 @@ async def url_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     text = update.effective_message.text.strip()
-    # Ignore slash commands handled by CommandHandler
     if text.startswith("/"):
         return
 
@@ -102,7 +111,6 @@ async def url_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not urls:
         return
 
-    # Process first extracted URL in MVP phase
     target_url = urls[0]
     logger.info(f"Auto-detected URL in message: {target_url}")
     await process_target_url(update, target_url)
