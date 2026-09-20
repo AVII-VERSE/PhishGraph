@@ -10,6 +10,7 @@ from app.db.models.scan import Scan
 from app.db.models.threat_intel import ThreatIntelRecord
 from app.db.models.tls_record import TLSRecord
 from app.db.models.user import User
+from app.db.models.watch import Watch
 
 __all__ = [
     "User",
@@ -22,4 +23,5 @@ __all__ = [
     "ScanRiskFactor",
     "Fingerprint",
     "Correlation",
+    "Watch",
 ]
