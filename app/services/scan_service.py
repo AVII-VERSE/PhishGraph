@@ -1,10 +1,11 @@
 """Scan orchestration service managing user tracking and scan lifecycles."""
 
 import asyncio
+import json
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +18,13 @@ from app.db.models.dns_record import DNSRecord
 from app.db.models.domain import Domain
 from app.db.models.redirect import RedirectRecord
 from app.db.models.scan import Scan
+from app.db.models.threat_intel import ThreatIntelRecord
 from app.db.models.tls_record import TLSRecord
 from app.db.models.user import User
 from app.logging import get_logger, scan_id_ctx, user_id_ctx
 from app.security.url_safety import validate_url_safety
+from app.threat_intel.aggregator import ThreatIntelAggregator
+from app.threat_intel.base import ThreatIntelResult
 
 logger = get_logger("phishgraph.scan_service")
 
@@ -149,6 +153,7 @@ class ScanService:
         session: AsyncSession,
         scan_id: int,
         allow_private_in_testing: bool = False,
+        threat_aggregator: Optional[ThreatIntelAggregator] = None,
     ) -> Tuple[
         Scan,
         URLFeatures,
@@ -156,8 +161,9 @@ class ScanService:
         Optional[DomainIntelligenceResult],
         Optional[TLSAnalysisResult],
         Optional[RedirectChainResult],
+        List[ThreatIntelResult],
     ]:
-        """Execute Phase 2 multi-analyzer intelligence pipeline with SSRF checks."""
+        """Execute Phase 3 multi-analyzer & threat intelligence pipeline."""
         stmt = select(Scan).where(Scan.id == scan_id)
         result = await session.execute(stmt)
         scan = result.scalar_one_or_none()
@@ -171,7 +177,7 @@ class ScanService:
             scan.status = "in_progress"
             await session.commit()
 
-            # 1. URL Heuristic Analysis
+            # 1. URL Heuristics
             heuristics = analyze_url_heuristics(scan.normalized_url)
 
             # 2. SSRF Check
@@ -184,18 +190,20 @@ class ScanService:
             rdap_res: Optional[DomainIntelligenceResult] = None
             tls_res: Optional[TLSAnalysisResult] = None
             redir_res: Optional[RedirectChainResult] = None
+            ti_results: List[ThreatIntelResult] = []
 
             if not is_safe:
-                # SSRF blocked
                 scan.risk_score = 90.0
                 scan.risk_level = "CRITICAL"
                 scan.confidence_score = 95.0
                 scan.status = "completed"
                 scan.completed_at = datetime.now(timezone.utc)
                 await session.commit()
-                return scan, heuristics, dns_res, rdap_res, tls_res, redir_res
+                return scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results
 
-            # 3. Asynchronous Multi-Analyzer Gathering
+            # 3. Asynchronous Analysis & Threat Intelligence Gathering
+            aggregator = threat_aggregator or ThreatIntelAggregator()
+
             dns_task = analyze_dns(scan.domain)
             rdap_task = analyze_domain_rdap(scan.domain)
             tls_task = inspect_tls(scan.domain)
@@ -203,11 +211,17 @@ class ScanService:
                 scan.normalized_url,
                 allow_private_in_testing=allow_private_in_testing,
             )
-
-            gathered = await asyncio.gather(
-                dns_task, rdap_task, tls_task, redir_task, return_exceptions=True
+            ti_task = aggregator.query_all(
+                url=scan.normalized_url,
+                domain=scan.domain,
+                resolved_ips=resolved_ips,
             )
 
+            gathered = await asyncio.gather(
+                dns_task, rdap_task, tls_task, redir_task, ti_task, return_exceptions=True
+            )
+
+            # Process DNS
             if isinstance(gathered[0], DNSAnalysisResult):
                 dns_res = gathered[0]
                 for rec in dns_res.records:
@@ -221,9 +235,9 @@ class ScanService:
                         )
                     )
 
+            # Process RDAP
             if isinstance(gathered[1], DomainIntelligenceResult):
                 rdap_res = gathered[1]
-                # Update domain record with registration metadata
                 dom_stmt = select(Domain).where(Domain.domain == scan.domain)
                 dom_result = await session.execute(dom_stmt)
                 dom = dom_result.scalar_one_or_none()
@@ -234,6 +248,7 @@ class ScanService:
                     dom.registrar = rdap_res.registrar
                     dom.last_seen_at = datetime.now(timezone.utc)
 
+            # Process TLS
             if isinstance(gathered[2], TLSAnalysisResult):
                 tls_res = gathered[2]
                 session.add(
@@ -250,6 +265,7 @@ class ScanService:
                     )
                 )
 
+            # Process Redirects
             if isinstance(gathered[3], RedirectChainResult):
                 redir_res = gathered[3]
                 for hop in redir_res.hops:
@@ -263,11 +279,40 @@ class ScanService:
                         )
                     )
 
-            # 4. Preliminary Composite Risk Calculation (Phase 2 Heuristic Baseline)
+            # Process Threat Intelligence
+            if isinstance(gathered[4], list):
+                ti_results = gathered[4]
+                for ti in ti_results:
+                    session.add(
+                        ThreatIntelRecord(
+                            scan_id=scan.id,
+                            provider=ti.provider,
+                            provider_status=ti.status,
+                            malicious=ti.malicious,
+                            suspicious=ti.suspicious,
+                            provider_score=ti.score,
+                            labels=", ".join(ti.labels) if ti.labels else None,
+                            reference_id=ti.raw_reference,
+                            raw_json=json.dumps(ti.details) if ti.details else None,
+                        )
+                    )
+
+            # 4. Composite Risk & Confidence Engine
             risk_score = 0.0
             confidence = 30.0
 
-            # URL Heuristics contribution
+            # Threat Intel signals (strongest weighting per Section 14)
+            positive_ti_count = sum(1 for ti in ti_results if ti.malicious)
+            suspicious_ti_count = sum(1 for ti in ti_results if ti.suspicious and not ti.malicious)
+
+            if positive_ti_count >= 1:
+                risk_score += 35.0 + min(30.0, (positive_ti_count - 1) * 15.0)
+                confidence += 35.0
+            elif suspicious_ti_count >= 1:
+                risk_score += 20.0
+                confidence += 20.0
+
+            # Heuristics
             if heuristics.is_ip_hostname:
                 risk_score += 15.0
             if heuristics.has_at_symbol:
@@ -283,28 +328,28 @@ class ScanService:
             if heuristics.path_entropy > 4.2:
                 risk_score += 5.0
 
-            # Domain age contribution
+            # Domain age
             if rdap_res and rdap_res.recently_registered:
-                risk_score += 20.0
-                confidence += 20.0
-
-            # TLS contribution
-            if tls_res:
+                risk_score += 18.0
                 confidence += 15.0
-                if tls_res.is_self_signed:
-                    risk_score += 15.0
-                if tls_res.is_expired:
-                    risk_score += 12.0
-                if not tls_res.hostname_matches and tls_res.https_available:
-                    risk_score += 15.0
 
-            # Redirect contribution
+            # TLS
+            if tls_res:
+                confidence += 10.0
+                if tls_res.is_self_signed:
+                    risk_score += 12.0
+                if tls_res.is_expired:
+                    risk_score += 10.0
+                if not tls_res.hostname_matches and tls_res.https_available:
+                    risk_score += 12.0
+
+            # Redirects
             if redir_res:
                 confidence += 10.0
                 if redir_res.cross_domain_redirects >= 2:
-                    risk_score += 15.0
+                    risk_score += 12.0
                 elif redir_res.cross_domain_redirects == 1:
-                    risk_score += 8.0
+                    risk_score += 6.0
 
             risk_score = min(100.0, risk_score)
             confidence = min(100.0, confidence)
@@ -325,8 +370,8 @@ class ScanService:
 
             await session.commit()
             await session.refresh(scan)
-            logger.info(f"Scan {scan.scan_uuid} completed: risk={scan.risk_score}, level={scan.risk_level}")
-            return scan, heuristics, dns_res, rdap_res, tls_res, redir_res
+            logger.info(f"Scan {scan.scan_uuid} complete: risk={scan.risk_score}, level={scan.risk_level}")
+            return scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results
 
         except Exception as exc:
             scan.status = "failed"
@@ -337,5 +382,4 @@ class ScanService:
             scan_id_ctx.reset(token_scan)
             user_id_ctx.reset(token_user)
 
-    # Alias for backward compatibility
     execute_mvp_scan = execute_scan
