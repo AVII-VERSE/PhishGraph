@@ -10,7 +10,9 @@ from telegram.ext import (
     filters,
 )
 from app.bot.handlers.analyze import analyze_command, url_message_handler
+from app.bot.handlers.history import history_handler
 from app.bot.handlers.qr import qr_image_handler
+from app.bot.handlers.report import report_command
 from app.bot.handlers.start import help_handler, start_handler
 from app.config import get_settings
 from app.db.session import init_db
@@ -33,6 +35,8 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("history", history_handler))
+    app.add_handler(CommandHandler("report", report_command))
 
     # Register URL message auto-detection handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, url_message_handler))
