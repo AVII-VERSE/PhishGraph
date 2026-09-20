@@ -52,10 +52,19 @@ async def process_target_url(update: Update, target_url: str) -> None:
         )
 
         try:
-            # Execute Phase 3 scan pipeline
-            scan, heuristics, dns_res, rdap_res, tls_res, redir_res, ti_results = (
-                await ScanService.execute_scan(session=session, scan_id=scan.id)
-            )
+            # Execute full multi-engine scan pipeline
+            (
+                scan,
+                heuristics,
+                dns_res,
+                rdap_res,
+                tls_res,
+                redir_res,
+                ti_results,
+                brand_res,
+                puny_res,
+                risk_res,
+            ) = await ScanService.execute_scan(session=session, scan_id=scan.id)
 
             result_text = format_scan_result(
                 scan=scan,
@@ -65,6 +74,9 @@ async def process_target_url(update: Update, target_url: str) -> None:
                 tls_res=tls_res,
                 redir_res=redir_res,
                 ti_results=ti_results,
+                brand_res=brand_res,
+                puny_res=puny_res,
+                risk_res=risk_res,
             )
 
             # Edit progress message in place as specified in Section 18
