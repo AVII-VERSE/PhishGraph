@@ -10,6 +10,7 @@ from telegram.ext import (
     filters,
 )
 from app.bot.handlers.analyze import analyze_command, url_message_handler
+from app.bot.handlers.qr import qr_image_handler
 from app.bot.handlers.start import help_handler, start_handler
 from app.config import get_settings
 from app.db.session import init_db
@@ -35,6 +36,9 @@ def build_bot_app(token: Optional[str] = None) -> Application:
 
     # Register URL message auto-detection handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, url_message_handler))
+
+    # Register QR code image handler (Section 5.8)
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, qr_image_handler))
 
     return app
 

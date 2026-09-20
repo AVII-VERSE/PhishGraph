@@ -214,3 +214,27 @@ def format_generic_error(error_msg: str) -> str:
         f"An error occurred while processing your request: {error_msg}\n"
         "Please try again later or check that the domain is reachable."
     )
+
+
+def format_qr_detected_message(extracted_url: str) -> str:
+    """Format QR code detection acknowledgment message (Section 5.8)."""
+    return (
+        "📷 *QR CODE DETECTED*\n\n"
+        "*Extracted URL:*\n"
+        f"`{extracted_url}`\n\n"
+        "_Starting security analysis..._"
+    )
+
+
+def format_message_analysis(findings: list[str]) -> str:
+    """Format social engineering message analysis summary (Section 5.7)."""
+    lines = [
+        "📨 *MESSAGE ANALYSIS*",
+        "",
+        "*Potential social-engineering signals:*",
+    ]
+    for finding in findings:
+        lines.append(f"• {finding}")
+    lines.append("")
+    lines.append("────────────────────")
+    return "\n".join(lines)
