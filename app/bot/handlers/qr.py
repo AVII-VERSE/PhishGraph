@@ -50,6 +50,20 @@ async def qr_image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
+        # Rate limiting check (Section 39)
+        from app.services.rate_limiter import get_rate_limiter
+        from app.services.metrics_service import MetricsService
+
+        user_id = update.effective_user.id if update.effective_user else 0
+        rate_limiter = get_rate_limiter()
+        is_limited, _ = await rate_limiter.check_scan_rate_limit(user_id)
+        if is_limited:
+            MetricsService.record_rate_limit_hit()
+            await update.effective_message.reply_text(
+                text="⏳ Rate limit reached.\nPlease try again later.",
+            )
+            return
+
         # 1. Acknowledge QR code detection
         ack_msg = await update.effective_message.reply_text(
             text=format_qr_detected_message(result.extracted_url),
@@ -87,6 +101,7 @@ async def qr_image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 risk_res,
                 correlation_res,
             ) = await ScanService.execute_scan(session=session, scan_id=scan.id)
+            MetricsService.record_scan_executed(risk_res.risk_score)
 
             report_text = format_scan_result(
                 scan=scan,

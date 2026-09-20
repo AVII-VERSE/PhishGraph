@@ -56,7 +56,7 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         except ValueError as val_err:
             await update.effective_message.reply_text(
-                text=f"❌ *Invalid URL:* {val_err}",
+                text=f"❌ *Watch Error:* {val_err}",
                 parse_mode=ParseMode.MARKDOWN,
             )
 

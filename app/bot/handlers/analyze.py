@@ -12,6 +12,7 @@ from app.bot.formatters.scan_result import (
     format_progress_message,
     format_scan_result,
 )
+from app.config import get_settings
 from app.db.session import async_session_factory
 from app.logging import get_logger
 from app.services.scan_service import ScanService, extract_urls_from_text
@@ -30,6 +31,29 @@ async def process_target_url(
         return
 
     tg_user = update.effective_user
+    settings = get_settings()
+
+    # Input length abuse protection
+    if len(target_url) > settings.MAX_URL_LENGTH:
+        await update.effective_message.reply_text(
+            text=f"❌ *Invalid URL*\nURL exceeds maximum supported length ({settings.MAX_URL_LENGTH} characters).",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    # Section 39 Rate Limiting
+    from app.services.rate_limiter import get_rate_limiter
+    from app.services.metrics_service import MetricsService
+
+    rate_limiter = get_rate_limiter()
+    is_limited, retry_after = await rate_limiter.check_scan_rate_limit(tg_user.id)
+    if is_limited:
+        MetricsService.record_rate_limit_hit()
+        await update.effective_message.reply_text(
+            text="⏳ Rate limit reached.\nPlease try again later.",
+        )
+        return
+
     session_factory = async_session_factory()
 
     async with session_factory() as session:
@@ -88,6 +112,7 @@ async def process_target_url(
                 risk_res=risk_res,
                 correlation_res=correlation_res,
             )
+            MetricsService.record_scan_executed(risk_res.risk_score)
 
             # Prepend Message Social-Engineering Analysis if lure signals detected (Section 5.7)
             if original_message_text:
