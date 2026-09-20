@@ -146,6 +146,11 @@ class BrandAnalyzer:
     def __init__(self, brands_map: Optional[Dict[str, List[str]]] = None):
         self.brands_map = brands_map or load_brand_dataset()
 
+    @property
+    def brands(self) -> Dict[str, List[str]]:
+        """Dictionary of brand names to official domains."""
+        return self.brands_map
+
     def analyze_domain(self, domain: str) -> BrandImpersonationResult:
         """Analyze a domain against official brand signatures and typosquat variations."""
         dom_clean = domain.lower().strip()

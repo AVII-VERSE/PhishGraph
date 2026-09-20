@@ -98,3 +98,64 @@ async def test_url_auto_detection_handler(test_engine):
     assert reply_msg.edit_text.called
     _, edit_kwargs = reply_msg.edit_text.call_args
     assert "PHISHGRAPH ANALYSIS" in edit_kwargs.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_forwarded_message_with_social_engineering(test_engine):
+    """Verify that forwarded/lure text triggers social engineering findings (Section 5.7)."""
+    update, context, message, reply_msg = create_mock_update_and_context(
+        user_id=111222,
+        text="URGENT: Your PayPal account has been locked. Verify immediately: https://fake-paypa1.example/login",
+    )
+
+    await url_message_handler(update, context)
+
+    assert reply_msg.edit_text.called
+    _, edit_kwargs = reply_msg.edit_text.call_args
+    edited_text = edit_kwargs.get("text", "")
+    assert "MESSAGE ANALYSIS" in edited_text
+    assert "Potential social-engineering signals" in edited_text
+    assert "PHISHGRAPH ANALYSIS" in edited_text
+
+
+@pytest.mark.asyncio
+async def test_qr_image_handler_workflow(test_engine):
+    """Verify QR image handler extracts URL and executes full scan pipeline (Section 5.8)."""
+    from app.bot.handlers.qr import qr_image_handler, qr_analyzer
+    from app.analyzers.qr_analyzer import QRCodeResult
+
+    update, context, message, reply_msg = create_mock_update_and_context(
+        user_id=333555,
+        text="",
+    )
+
+    # Attach mock photo
+    mock_photo = MagicMock()
+    mock_file = MagicMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"dummy-image-bytes"))
+    mock_photo.get_file = AsyncMock(return_value=mock_file)
+    message.photo = [mock_photo]
+
+    # Mock QR analyzer returning valid result
+    qr_analyzer.decode_image_bytes = MagicMock(
+        return_value=QRCodeResult(
+            has_qr=True,
+            raw_payload="https://qr-phishing.test/login",
+            extracted_url="https://qr-phishing.test/login",
+            domain="qr-phishing.test",
+        )
+    )
+
+    await qr_image_handler(update, context)
+
+    # Initial acknowledgement
+    assert message.reply_text.called
+    _, reply_kwargs = message.reply_text.call_args
+    assert "QR CODE DETECTED" in reply_kwargs.get("text", "")
+
+    # Result update
+    assert reply_msg.edit_text.called
+    _, edit_kwargs = reply_msg.edit_text.call_args
+    assert "PHISHGRAPH ANALYSIS" in edit_kwargs.get("text", "")
+    assert "qr-phishing.test" in edit_kwargs.get("text", "")
+

@@ -1,11 +1,14 @@
 """Analyze command and automatic URL detection message handler."""
 
+from typing import Optional
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+from app.analyzers.message_analyzer import MessageAnalyzer
 from app.bot.formatters.scan_result import (
     format_generic_error,
     format_invalid_url_error,
+    format_message_analysis,
     format_progress_message,
     format_scan_result,
 )
@@ -14,9 +17,14 @@ from app.logging import get_logger
 from app.services.scan_service import ScanService, extract_urls_from_text
 
 logger = get_logger("phishgraph.bot.analyze")
+message_analyzer = MessageAnalyzer()
 
 
-async def process_target_url(update: Update, target_url: str) -> None:
+async def process_target_url(
+    update: Update,
+    target_url: str,
+    original_message_text: Optional[str] = None,
+) -> None:
     """Core URL processing pipeline for both /analyze and auto-detected URLs."""
     if not update.effective_user or not update.effective_message:
         return
@@ -81,6 +89,13 @@ async def process_target_url(update: Update, target_url: str) -> None:
                 correlation_res=correlation_res,
             )
 
+            # Prepend Message Social-Engineering Analysis if lure signals detected (Section 5.7)
+            if original_message_text:
+                msg_res = message_analyzer.analyze_text(original_message_text)
+                if msg_res.has_lure_signals:
+                    prefix = format_message_analysis(msg_res.findings)
+                    result_text = f"{prefix}\n\n{result_text}"
+
             # Edit progress message in place as specified in Section 18
             try:
                 await progress_msg.edit_text(text=result_text, parse_mode=ParseMode.MARKDOWN)
@@ -128,4 +143,4 @@ async def url_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     target_url = urls[0]
     logger.info(f"Auto-detected URL in message: {target_url}")
-    await process_target_url(update, target_url)
+    await process_target_url(update, target_url, original_message_text=text)
