@@ -1,5 +1,6 @@
 """Unit tests for scan service and URL extraction."""
 
+from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.scan_service import (
@@ -99,6 +100,7 @@ async def test_create_and_execute_scan(db_session: AsyncSession):
         brand_res,
         puny_res,
         risk_res,
+        correlation_res,
     ) = await ScanService.execute_scan(
         session=db_session,
         scan_id=scan.id,
@@ -114,3 +116,84 @@ async def test_create_and_execute_scan(db_session: AsyncSession):
     assert brand_res.has_brand_impersonation is True
     assert brand_res.top_matched_brand == "paypal"
     assert risk_res.risk_score > 0
+    assert correlation_res is not None
+
+
+@pytest.mark.asyncio
+async def test_campaign_correlation_between_two_scans(db_session: AsyncSession):
+    """Verify that two related scans correlate via shared infrastructure (favicon, TLS, etc.)."""
+    from unittest.mock import AsyncMock
+    from app.analyzers.favicon_analyzer import FaviconAnalyzer, FaviconResult
+    from app.db.models.fingerprint import Fingerprint
+
+    user = await ScanService.get_or_create_user(
+        session=db_session,
+        telegram_user_id=888999,
+        username="threat_hunter",
+    )
+
+    # 1. Create first scan & manual fingerprint representing prior observation
+    scan1 = await ScanService.create_scan(
+        session=db_session,
+        raw_url="https://phish-node1.test",
+        user_id=user.id,
+    )
+    fp1 = Fingerprint(
+        scan_id=scan1.id,
+        domain=scan1.domain,
+        ip_set=["203.0.113.50"],
+        asn="AS65000",
+        nameserver_set=["ns1.fastflux.test"],
+        tls_serial="CERT-SERIAL-9999",
+        favicon_hash="mmh3:777888999",
+        redirect_domain_set=["login-destination.test"],
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(fp1)
+    await db_session.commit()
+
+    # 2. Create second scan
+    scan2 = await ScanService.create_scan(
+        session=db_session,
+        raw_url="https://phish-node2.test",
+        user_id=user.id,
+    )
+
+    # Mock favicon analyzer to return the same favicon hash
+    mock_fav = FaviconAnalyzer()
+    mock_fav.analyze = AsyncMock(
+        return_value=FaviconResult(
+            favicon_url="https://phish-node2.test/favicon.ico",
+            mmh3_hash="mmh3:777888999",
+            sha256_hash="sha256:abcd",
+            content_length=120,
+        )
+    )
+
+    (
+        completed_scan2,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        correlation_res,
+    ) = await ScanService.execute_scan(
+        session=db_session,
+        scan_id=scan2.id,
+        allow_private_in_testing=True,
+        favicon_analyzer=mock_fav,
+    )
+
+    assert correlation_res is not None
+    assert correlation_res.total_matches >= 1
+    top_match = correlation_res.matches[0]
+    assert top_match.related_domain == "phish-node1.test"
+    assert top_match.related_scan_id == scan1.id
+    assert "SAME_FAVICON_HASH" in top_match.relations
+    assert top_match.score >= 25
+

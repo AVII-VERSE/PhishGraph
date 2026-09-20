@@ -64,6 +64,7 @@ async def process_target_url(update: Update, target_url: str) -> None:
                 brand_res,
                 puny_res,
                 risk_res,
+                correlation_res,
             ) = await ScanService.execute_scan(session=session, scan_id=scan.id)
 
             result_text = format_scan_result(
@@ -77,6 +78,7 @@ async def process_target_url(update: Update, target_url: str) -> None:
                 brand_res=brand_res,
                 puny_res=puny_res,
                 risk_res=risk_res,
+                correlation_res=correlation_res,
             )
 
             # Edit progress message in place as specified in Section 18

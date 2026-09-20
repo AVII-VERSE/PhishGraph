@@ -9,15 +9,21 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.analyzers.asn_analyzer import ASNAnalyzer
 from app.analyzers.brand_analyzer import BrandAnalyzer, BrandImpersonationResult
 from app.analyzers.dns_analyzer import DNSAnalysisResult, analyze_dns
 from app.analyzers.domain_analyzer import DomainIntelligenceResult, analyze_domain_rdap
+from app.analyzers.favicon_analyzer import FaviconAnalyzer, FaviconResult
 from app.analyzers.punycode_analyzer import PunycodeAnalysisResult, analyze_punycode_and_homographs
 from app.analyzers.redirect_analyzer import RedirectChainResult, trace_redirect_chain
 from app.analyzers.tls_analyzer import TLSAnalysisResult, inspect_tls
 from app.analyzers.url_analyzer import URLFeatures, analyze_url_heuristics
+from app.correlation.correlation_engine import CorrelationEngine, CorrelationResult
+from app.correlation.fingerprint import FingerprintData, build_fingerprint
+from app.db.models.correlation import Correlation
 from app.db.models.dns_record import DNSRecord
 from app.db.models.domain import Domain
+from app.db.models.fingerprint import Fingerprint
 from app.db.models.redirect import RedirectRecord
 from app.db.models.risk_factor import ScanRiskFactor
 from app.db.models.scan import Scan
@@ -160,6 +166,9 @@ class ScanService:
         allow_private_in_testing: bool = False,
         threat_aggregator: Optional[ThreatIntelAggregator] = None,
         brand_analyzer: Optional[BrandAnalyzer] = None,
+        favicon_analyzer: Optional[FaviconAnalyzer] = None,
+        asn_analyzer: Optional[ASNAnalyzer] = None,
+        correlation_engine: Optional[CorrelationEngine] = None,
     ) -> Tuple[
         Scan,
         URLFeatures,
@@ -171,8 +180,9 @@ class ScanService:
         BrandImpersonationResult,
         PunycodeAnalysisResult,
         RiskAssessmentResult,
+        Optional[CorrelationResult],
     ]:
-        """Execute Phase 4/5 full analysis, brand spoof detection, and explainable scoring."""
+        """Execute Phase 6/7 full analysis, fingerprinting, and campaign correlation."""
         stmt = select(Scan).where(Scan.id == scan_id)
         result = await session.execute(stmt)
         scan = result.scalar_one_or_none()
@@ -203,6 +213,7 @@ class ScanService:
             tls_res: Optional[TLSAnalysisResult] = None
             redir_res: Optional[RedirectChainResult] = None
             ti_results: List[ThreatIntelResult] = []
+            fav_res: Optional[FaviconResult] = None
 
             if not is_safe:
                 # SSRF blocked -> Immediate critical risk
@@ -228,10 +239,12 @@ class ScanService:
                     brand_res,
                     puny_res,
                     risk_res,
+                    None,
                 )
 
             # 3. Asynchronous Multi-Analyzer Gathering
             aggregator = threat_aggregator or ThreatIntelAggregator()
+            fav_eng = favicon_analyzer or FaviconAnalyzer()
 
             dns_task = analyze_dns(scan.domain)
             rdap_task = analyze_domain_rdap(scan.domain)
@@ -245,9 +258,13 @@ class ScanService:
                 domain=scan.domain,
                 resolved_ips=resolved_ips,
             )
+            fav_task = fav_eng.analyze(
+                domain=scan.domain,
+                allow_private_in_testing=allow_private_in_testing,
+            )
 
             gathered = await asyncio.gather(
-                dns_task, rdap_task, tls_task, redir_task, ti_task, return_exceptions=True
+                dns_task, rdap_task, tls_task, redir_task, ti_task, fav_task, return_exceptions=True
             )
 
             # Process DNS
@@ -326,6 +343,22 @@ class ScanService:
                         )
                     )
 
+            # Process Favicon
+            if len(gathered) > 5 and isinstance(gathered[5], FaviconResult):
+                fav_res = gathered[5]
+
+            # ASN Resolution for primary resolved IP
+            asn_val: Optional[str] = None
+            if dns_res and dns_res.resolved_ips:
+                asn_eng = asn_analyzer or ASNAnalyzer()
+                for ip in dns_res.resolved_ips:
+                    try:
+                        asn_val = await asn_eng.lookup_ip_asn(ip)
+                        if asn_val:
+                            break
+                    except Exception as e:
+                        logger.debug(f"ASN lookup error for {ip}: {e}")
+
             # 4. Explainable Scoring Engine
             risk_res = calculate_risk_score(
                 heuristics=heuristics,
@@ -358,6 +391,43 @@ class ScanService:
                     )
                 )
 
+            # 5. Infrastructure Fingerprinting & Campaign Correlation
+            fp_data = build_fingerprint(
+                scan_id=scan.id,
+                domain=scan.domain,
+                dns_res=dns_res,
+                domain_info=rdap_res,
+                tls_res=tls_res,
+                redirect_res=redir_res,
+                favicon_res=fav_res,
+                asn=asn_val,
+                brand_target=brand_res.top_matched_brand if brand_res and brand_res.has_brand_impersonation else None,
+            )
+
+            fp_record = Fingerprint(
+                scan_id=scan.id,
+                domain=fp_data.domain,
+                ip_set=fp_data.ip_set,
+                asn=fp_data.asn,
+                nameserver_set=fp_data.nameserver_set,
+                registrar=fp_data.registrar,
+                tls_serial=fp_data.tls_serial,
+                tls_issuer=fp_data.tls_issuer,
+                favicon_hash=fp_data.favicon_hash,
+                page_hash=fp_data.page_hash,
+                redirect_domain_set=fp_data.redirect_domain_set,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(fp_record)
+            await session.flush()
+
+            corr_eng = correlation_engine or CorrelationEngine()
+            correlation_res = await corr_eng.correlate(
+                current=fp_data,
+                session=session,
+                persist=True,
+            )
+
             scan.risk_score = risk_res.risk_score
             scan.risk_level = risk_res.risk_level
             scan.confidence_score = confidence_score
@@ -368,7 +438,8 @@ class ScanService:
             await session.refresh(scan)
             logger.info(
                 f"Scan {scan.scan_uuid} complete: risk={scan.risk_score} ({scan.risk_level}), "
-                f"confidence={scan.confidence_score}, factors={len(risk_res.factors)}"
+                f"confidence={scan.confidence_score}, factors={len(risk_res.factors)}, "
+                f"correlations={correlation_res.total_matches}"
             )
 
             return (
@@ -382,6 +453,7 @@ class ScanService:
                 brand_res,
                 puny_res,
                 risk_res,
+                correlation_res,
             )
 
         except Exception as exc:

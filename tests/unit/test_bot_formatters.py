@@ -70,3 +70,37 @@ def test_error_formatters():
     gen_msg = format_generic_error("Connection timeout")
     assert "Analysis Error" in gen_msg
     assert "Connection timeout" in gen_msg
+
+
+def test_scan_result_with_campaign_correlation():
+    """Verify campaign correlation section renders cleanly in telegram message."""
+    from app.correlation.correlation_engine import CorrelationMatch, CorrelationResult
+
+    scan = Scan(
+        scan_uuid="SCAN-2026-CORR01",
+        original_url="https://paypa1-update.test/login",
+        domain="paypa1-update.test",
+        status="completed",
+        risk_score=85.0,
+        risk_level="HIGH",
+        confidence_score=90.0,
+    )
+    corr_res = CorrelationResult(
+        scan_id=1,
+        domain="paypa1-update.test",
+        matches=[
+            CorrelationMatch(
+                related_domain="paypa1-secure.test",
+                related_scan_id=2,
+                score=72,
+                relations=["SAME_FAVICON_HASH", "SAME_NAMESERVER", "SAME_ASN"],
+            )
+        ],
+    )
+    output = format_scan_result(scan=scan, correlation_res=corr_res)
+    assert "CAMPAIGN CORRELATION" in output
+    assert "paypa1-secure.test" in output
+    assert "Correlation: 72/100" in output
+    assert "Same favicon hash" in output
+    assert "Same nameserver" in output
+    assert "Same ASN" in output
