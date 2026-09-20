@@ -1,5 +1,11 @@
 """Telegram message formatters adhering to PhishGraph design specification."""
 
+from typing import Optional
+from app.analyzers.dns_analyzer import DNSAnalysisResult
+from app.analyzers.domain_analyzer import DomainIntelligenceResult
+from app.analyzers.redirect_analyzer import RedirectChainResult
+from app.analyzers.tls_analyzer import TLSAnalysisResult
+from app.analyzers.url_analyzer import URLFeatures
 from app.db.models.scan import Scan
 
 
@@ -57,8 +63,15 @@ def format_progress_message(scan_uuid: str, domain: str) -> str:
     )
 
 
-def format_scan_result(scan: Scan) -> str:
-    """Format completed scan summary for Telegram."""
+def format_scan_result(
+    scan: Scan,
+    heuristics: Optional[URLFeatures] = None,
+    dns_res: Optional[DNSAnalysisResult] = None,
+    rdap_res: Optional[DomainIntelligenceResult] = None,
+    tls_res: Optional[TLSAnalysisResult] = None,
+    redir_res: Optional[RedirectChainResult] = None,
+) -> str:
+    """Format completed scan report for Telegram adhering to Section 5.1 & 42 of spec."""
     risk_emoji = "🟢"
     if scan.risk_level == "CRITICAL":
         risk_emoji = "🚨"
@@ -70,17 +83,57 @@ def format_scan_result(scan: Scan) -> str:
     risk_score_str = f"{int(scan.risk_score) if scan.risk_score is not None else 0}/100"
     conf_score_str = f"{int(scan.confidence_score) if scan.confidence_score is not None else 0}/100"
 
-    return (
-        f"{risk_emoji} *PHISHGRAPH ANALYSIS*\n\n"
-        f"*Scan ID:* `{scan.scan_uuid}`\n"
-        f"*URL:* `{scan.original_url}`\n\n"
-        f"*Threat Risk:* {risk_score_str} — {scan.risk_level or 'PENDING'}\n"
-        f"*Evidence Confidence:* {conf_score_str}\n\n"
-        f"*Domain:* `{scan.domain}`\n"
-        f"*Status:* `{scan.status.upper()}`\n\n"
-        "────────────────────\n"
-        "_Detailed indicator analyzers and threat feeds will populate in next phase._"
-    )
+    sections = [
+        f"{risk_emoji} *PHISHGRAPH ANALYSIS*",
+        "",
+        f"*Scan ID:* `{scan.scan_uuid}`",
+        f"*URL:* `{scan.original_url}`",
+        "",
+        f"*Threat Risk:* {risk_score_str} — *{scan.risk_level or 'LOW'}*",
+        f"*Evidence Confidence:* {conf_score_str}",
+        "────────────────────",
+    ]
+
+    # Key Findings / Alerts
+    findings: list[str] = []
+    if heuristics:
+        findings.extend([f"⚠️ {s}" for s in heuristics.heuristic_signals])
+    if rdap_res:
+        findings.extend([f"⚠️ {s}" for s in rdap_res.signals])
+    if tls_res:
+        findings.extend([f"⚠️ {s}" for s in tls_res.signals])
+    if redir_res:
+        findings.extend([f"⚠️ {s}" for s in redir_res.signals])
+
+    if findings:
+        sections.append("*Key Findings:*")
+        sections.extend(findings[:5])
+        sections.append("────────────────────")
+
+    # Infrastructure Breakdown
+    infra_lines = ["*Infrastructure:*"]
+    if dns_res and dns_res.resolved_ips:
+        ips_str = ", ".join(dns_res.resolved_ips[:3])
+        infra_lines.append(f"• *IP:* `{ips_str}`")
+    if dns_res and dns_res.nameservers:
+        ns_str = ", ".join(dns_res.nameservers[:2])
+        infra_lines.append(f"• *Nameservers:* `{ns_str}`")
+    if rdap_res and rdap_res.domain_age_days is not None:
+        infra_lines.append(f"• *Domain Age:* {rdap_res.domain_age_days} days")
+    if rdap_res and rdap_res.registrar:
+        infra_lines.append(f"• *Registrar:* {rdap_res.registrar}")
+    if tls_res:
+        tls_status = "Valid" if tls_res.is_valid else ("Self-Signed" if tls_res.is_self_signed else "Unavailable")
+        infra_lines.append(f"• *TLS:* {tls_status} ({tls_res.tls_version or 'N/A'})")
+    if redir_res:
+        infra_lines.append(f"• *Redirects:* {redir_res.total_hops} hop(s)")
+
+    if len(infra_lines) > 1:
+        sections.extend(infra_lines)
+        sections.append("────────────────────")
+
+    sections.append("_Assessment based on observed indicators. Avoid submitting credentials unless verified._")
+    return "\n".join(sections)
 
 
 def format_invalid_url_error(raw_url: str) -> str:

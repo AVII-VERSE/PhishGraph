@@ -87,9 +87,17 @@ async def test_create_and_execute_scan(db_session: AsyncSession):
     assert scan.domain == "paypa1-update.test"
     assert scan.status == "pending"
 
-    # Execute MVP scan
-    completed_scan = await ScanService.execute_mvp_scan(session=db_session, scan_id=scan.id)
+    # Execute scan with allow_private_in_testing for mock domain
+    completed_scan, heuristics, dns_res, rdap_res, tls_res, redir_res = (
+        await ScanService.execute_scan(
+            session=db_session,
+            scan_id=scan.id,
+            allow_private_in_testing=True,
+        )
+    )
     assert completed_scan.status == "completed"
     assert completed_scan.risk_score is not None
     assert completed_scan.confidence_score is not None
     assert completed_scan.completed_at is not None
+    assert heuristics is not None
+    assert heuristics.hostname == "paypa1-update.test"
