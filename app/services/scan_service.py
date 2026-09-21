@@ -11,11 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.analyzers.asn_analyzer import ASNAnalyzer
 from app.analyzers.brand_analyzer import BrandAnalyzer, BrandImpersonationResult
+from app.analyzers.dga_analyzer import DGAResult, analyze_dga
 from app.analyzers.dns_analyzer import DNSAnalysisResult, analyze_dns
 from app.analyzers.domain_analyzer import DomainIntelligenceResult, analyze_domain_rdap
 from app.analyzers.favicon_analyzer import FaviconAnalyzer, FaviconResult
 from app.analyzers.punycode_analyzer import PunycodeAnalysisResult, analyze_punycode_and_homographs
 from app.analyzers.redirect_analyzer import RedirectChainResult, trace_redirect_chain
+
 from app.analyzers.tls_analyzer import TLSAnalysisResult, inspect_tls
 from app.analyzers.url_analyzer import URLFeatures, analyze_url_heuristics
 from app.correlation.correlation_engine import CorrelationEngine, CorrelationResult
@@ -32,8 +34,10 @@ from app.db.models.tls_record import TLSRecord
 from app.db.models.user import User
 from app.logging import get_logger, scan_id_ctx, user_id_ctx
 from app.scoring.confidence_engine import calculate_confidence_score
-from app.scoring.risk_engine import RiskAssessmentResult, calculate_risk_score
+from app.scoring.mitre_mapper import MitreMapper
+from app.scoring.risk_engine import RiskAssessmentResult, RiskFactorItem, calculate_risk_score
 from app.security.url_safety import validate_url_safety
+
 from app.threat_intel.aggregator import ThreatIntelAggregator
 from app.threat_intel.base import ThreatIntelResult
 
@@ -196,17 +200,19 @@ class ScanService:
             scan.status = "in_progress"
             await session.commit()
 
-            # 1. URL Heuristics, Punycode & Brand Analysis
+            # 1. URL Heuristics, Punycode, Brand & DGA Analysis
             heuristics = analyze_url_heuristics(scan.normalized_url)
             puny_res = analyze_punycode_and_homographs(scan.domain)
             brand_engine = brand_analyzer or BrandAnalyzer()
             brand_res = brand_engine.analyze_domain(scan.domain)
+            dga_res = analyze_dga(scan.domain)
 
             # 2. SSRF Check
             is_safe, ssrf_reason, resolved_ips = await validate_url_safety(
                 scan.normalized_url,
                 allow_private_in_testing=allow_private_in_testing,
             )
+
 
             dns_res: Optional[DNSAnalysisResult] = None
             rdap_res: Optional[DomainIntelligenceResult] = None
@@ -216,11 +222,36 @@ class ScanService:
             fav_res: Optional[FaviconResult] = None
 
             if not is_safe:
-                # SSRF blocked -> Immediate critical risk
+                # SSRF or unresolvable domain blocked
+                mitre_list = MitreMapper.map_indicators(
+                    heuristics=heuristics,
+                    brand_res=brand_res,
+                    dga_res=dga_res,
+                )
+                factors = []
+                if dga_res and dga_res.is_dga_suspected:
+                    factors.append(
+                        RiskFactorItem(
+                            factor_code="DGA_ANOMALY",
+                            factor_description="Suspicious Domain Generation Algorithm (DGA) pattern detected",
+                            weight=18.0,
+                            evidence_source="dga_analyzer",
+                        )
+                    )
+                if brand_res and brand_res.has_brand_impersonation:
+                    factors.append(
+                        RiskFactorItem(
+                            factor_code="BRAND_IMPERSONATION",
+                            factor_description=f"Brand impersonation targeting {brand_res.top_matched_brand.capitalize() if brand_res.top_matched_brand else 'Brand'}",
+                            weight=20.0,
+                            evidence_source="brand_engine",
+                        )
+                    )
                 risk_res = RiskAssessmentResult(
                     risk_score=95.0,
                     risk_level="CRITICAL",
-                    factors=[],
+                    factors=factors,
+                    mitre_techniques=mitre_list,
                 )
                 scan.risk_score = risk_res.risk_score
                 scan.risk_level = risk_res.risk_level
@@ -228,6 +259,7 @@ class ScanService:
                 scan.status = "completed"
                 scan.completed_at = datetime.now(timezone.utc)
                 await session.commit()
+
                 return (
                     scan,
                     heuristics,
@@ -382,7 +414,9 @@ class ScanService:
                 ti_results=ti_results,
                 brand_res=brand_res,
                 puny_res=puny_res,
+                dga_res=dga_res,
             )
+
 
             confidence_score = calculate_confidence_score(
                 dns_res=dns_res,

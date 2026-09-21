@@ -161,18 +161,19 @@ def format_scan_result(
     sections.append("📡 *THREAT RADAR*")
     all_ti = ti_results or []
     ti_map = {ti.provider.lower(): ti for ti in all_ti}
-    providers_order = ["virustotal", "urlhaus", "otx", "safebrowsing", "abuseipdb"]
+    providers_order = ["virustotal", "urlhaus", "threatfox", "otx", "safebrowsing", "abuseipdb"]
 
     has_any_positive = False
     for p in providers_order:
         p_obj = ti_map.get(p)
-        name = p.capitalize() if p != "otx" else "AlienVault OTX"
+        name = p.capitalize() if p not in ("otx", "threatfox") else ("AlienVault OTX" if p == "otx" else "ThreatFox IOC")
         if p == "safebrowsing":
             name = "Safe Browsing"
         elif p == "abuseipdb":
             name = "AbuseIPDB"
         elif p == "virustotal":
             name = "VirusTotal"
+
 
         if p_obj:
             if p_obj.malicious:
@@ -285,6 +286,14 @@ def format_scan_result(
         for f in risk_res.factors[:5]:
             sections.append(f"• `+{int(f.weight)}` {f.factor_description}")
         sections.append("──────────────────────")
+
+    # MITRE ATT&CK Matrix Mapping
+    if risk_res and getattr(risk_res, "mitre_techniques", None):
+        sections.append("🎯 *MITRE ATT&CK® TACTICS & TECHNIQUES*")
+        for t in risk_res.mitre_techniques[:3]:
+            sections.append(f"• `{t.technique_id}`: *{t.technique_name}* ({t.tactic})")
+        sections.append("──────────────────────")
+
 
     # Final Verdict Summary
     if risk_score >= 70:

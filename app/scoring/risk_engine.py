@@ -3,15 +3,18 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from app.analyzers.brand_analyzer import BrandImpersonationResult
+from app.analyzers.dga_analyzer import DGAResult
 from app.analyzers.dns_analyzer import DNSAnalysisResult
 from app.analyzers.domain_analyzer import DomainIntelligenceResult
 from app.analyzers.punycode_analyzer import PunycodeAnalysisResult
 from app.analyzers.redirect_analyzer import RedirectChainResult
 from app.analyzers.tls_analyzer import TLSAnalysisResult
 from app.analyzers.url_analyzer import URLFeatures
+from app.scoring.mitre_mapper import MitreMapper, MitreTechnique
 from app.scoring.weights import (
     WEIGHT_BRAND_IMPERSONATION,
     WEIGHT_CROSS_DOMAIN_REDIRECT,
+    WEIGHT_DGA_ANOMALY,
     WEIGHT_DOMAIN_AGE_UNDER_7_DAYS,
     WEIGHT_DOMAIN_AGE_UNDER_30_DAYS,
     WEIGHT_HIGH_URL_ENTROPY,
@@ -26,6 +29,7 @@ from app.scoring.weights import (
     WEIGHT_TI_PHISHING_FEED_MATCH,
 )
 from app.threat_intel.base import ThreatIntelResult
+
 
 
 class RiskFactorItem(BaseModel):
@@ -43,6 +47,7 @@ class RiskAssessmentResult(BaseModel):
     risk_score: float
     risk_level: str  # LOW, MODERATE, HIGH, CRITICAL
     factors: List[RiskFactorItem] = Field(default_factory=list)
+    mitre_techniques: List[MitreTechnique] = Field(default_factory=list)
 
     @property
     def formatted_explanation(self) -> str:
@@ -62,10 +67,12 @@ def calculate_risk_score(
     ti_results: Optional[List[ThreatIntelResult]] = None,
     brand_res: Optional[BrandImpersonationResult] = None,
     puny_res: Optional[PunycodeAnalysisResult] = None,
+    dga_res: Optional[DGAResult] = None,
 ) -> RiskAssessmentResult:
     """Calculate transparent, explainable 0–100 threat risk score."""
     factors: List[RiskFactorItem] = []
     total_score = 0.0
+
 
     # 1. Threat Intelligence Contributions
     for ti in ti_results or []:
@@ -250,6 +257,28 @@ def calculate_risk_score(
             )
             total_score += WEIGHT_CROSS_DOMAIN_REDIRECT
 
+    # 8. DGA (Domain Generation Algorithm) & High-Entropy Anomaly
+    if dga_res and dga_res.is_dga_suspected:
+        factors.append(
+            RiskFactorItem(
+                factor_code="DGA_ANOMALY",
+                factor_description="Suspicious Domain Generation Algorithm (DGA) pattern detected",
+                weight=WEIGHT_DGA_ANOMALY,
+                evidence_source="dga_analyzer",
+            )
+        )
+        total_score += WEIGHT_DGA_ANOMALY
+
+    # Map MITRE ATT&CK Matrix
+    mitre_list = MitreMapper.map_indicators(
+        heuristics=heuristics,
+        brand_res=brand_res,
+        dga_res=dga_res,
+        tls_res=tls_res,
+        redir_res=redir_res,
+        ti_results=ti_results,
+    )
+
     # Cap total score at 100
     capped_score = min(100.0, max(0.0, total_score))
 
@@ -266,4 +295,6 @@ def calculate_risk_score(
         risk_score=round(capped_score, 1),
         risk_level=level,
         factors=factors,
+        mitre_techniques=mitre_list,
     )
+
