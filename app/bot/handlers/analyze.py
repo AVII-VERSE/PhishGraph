@@ -122,10 +122,20 @@ async def process_target_url(
                     result_text = f"{prefix}\n\n{result_text}"
 
             # Edit progress message in place as specified in Section 18
+            from app.bot.formatters.scan_result import build_scan_keyboard
+            keyboard = build_scan_keyboard(scan.scan_uuid, scan.domain)
             try:
-                await progress_msg.edit_text(text=result_text, parse_mode=ParseMode.MARKDOWN)
+                await progress_msg.edit_text(
+                    text=result_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard,
+                )
             except Exception:
-                await update.effective_message.reply_text(text=result_text, parse_mode=ParseMode.MARKDOWN)
+                await update.effective_message.reply_text(
+                    text=result_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard,
+                )
 
         except Exception as exc:
             logger.error(f"Failed to execute scan for {target_url}: {exc}", exc_info=True)

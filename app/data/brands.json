@@ -12,9 +12,22 @@
   "chase": ["chase.com"],
   "bankofamerica": ["bankofamerica.com", "bofa.com"],
   "wellsfargo": ["wellsfargo.com"],
+  "citigroup": ["citi.com", "citigroup.com"],
   "binance": ["binance.com"],
   "coinbase": ["coinbase.com"],
+  "metamask": ["metamask.io"],
+  "trustwallet": ["trustwallet.com"],
   "steam": ["steampowered.com", "steamcommunity.com"],
   "dhl": ["dhl.com"],
-  "fedex": ["fedex.com"]
+  "fedex": ["fedex.com"],
+  "usps": ["usps.com"],
+  "ups": ["ups.com"],
+  "linkedin": ["linkedin.com"],
+  "twitter": ["twitter.com", "x.com"],
+  "dropbox": ["dropbox.com"],
+  "adobe": ["adobe.com"],
+  "spotify": ["spotify.com"],
+  "sbi": ["onlinesbi.sbi", "sbi.co.in"],
+  "hdfc": ["hdfcbank.com"],
+  "icici": ["icicibank.com"]
 }

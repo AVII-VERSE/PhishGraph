@@ -347,7 +347,7 @@ class ScanService:
             if len(gathered) > 5 and isinstance(gathered[5], FaviconResult):
                 fav_res = gathered[5]
 
-            # ASN Resolution for primary resolved IP
+            # ASN & GeoIP Resolution for primary resolved IP
             asn_val: Optional[str] = None
             if dns_res and dns_res.resolved_ips:
                 asn_eng = asn_analyzer or ASNAnalyzer()
@@ -358,6 +358,19 @@ class ScanService:
                             break
                     except Exception as e:
                         logger.debug(f"ASN lookup error for {ip}: {e}")
+
+                # Populate GeoIP Intelligence
+                try:
+                    from app.analyzers.geo_analyzer import GeoIPAnalyzer
+                    geo_eng = GeoIPAnalyzer()
+                    geo_data = await geo_eng.lookup(dns_res.resolved_ips[0])
+                    dns_res.country = geo_data.country
+                    dns_res.country_code = geo_data.country_code
+                    dns_res.flag_emoji = geo_data.flag_emoji
+                    dns_res.isp = geo_data.isp or geo_data.org
+                    dns_res.city = geo_data.city
+                except Exception as g_err:
+                    logger.debug(f"GeoIP error: {g_err}")
 
             # 4. Explainable Scoring Engine
             risk_res = calculate_risk_score(
