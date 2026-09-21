@@ -10,7 +10,9 @@ from app.analyzers.punycode_analyzer import PunycodeAnalysisResult
 from app.analyzers.redirect_analyzer import RedirectChainResult
 from app.analyzers.tls_analyzer import TLSAnalysisResult
 from app.analyzers.url_analyzer import URLFeatures
+from app.analyzers.web3_analyzer import Web3ThreatResult
 from app.scoring.mitre_mapper import MitreMapper, MitreTechnique
+
 from app.scoring.weights import (
     WEIGHT_BRAND_IMPERSONATION,
     WEIGHT_CROSS_DOMAIN_REDIRECT,
@@ -68,7 +70,9 @@ def calculate_risk_score(
     brand_res: Optional[BrandImpersonationResult] = None,
     puny_res: Optional[PunycodeAnalysisResult] = None,
     dga_res: Optional[DGAResult] = None,
+    web3_res: Optional[Web3ThreatResult] = None,
 ) -> RiskAssessmentResult:
+
     """Calculate transparent, explainable 0–100 threat risk score."""
     factors: List[RiskFactorItem] = []
     total_score = 0.0
@@ -269,7 +273,20 @@ def calculate_risk_score(
         )
         total_score += WEIGHT_DGA_ANOMALY
 
+    # 9. Web3 & Crypto Wallet Drainer Detection
+    if web3_res and web3_res.is_crypto_phishing:
+        factors.append(
+            RiskFactorItem(
+                factor_code="WEB3_DRAINER_THREAT",
+                factor_description="Crypto wallet drainer or malicious token approval trap detected",
+                weight=25.0,
+                evidence_source="web3_analyzer",
+            )
+        )
+        total_score += 25.0
+
     # Map MITRE ATT&CK Matrix
+
     mitre_list = MitreMapper.map_indicators(
         heuristics=heuristics,
         brand_res=brand_res,

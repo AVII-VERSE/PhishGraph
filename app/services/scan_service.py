@@ -20,7 +20,9 @@ from app.analyzers.redirect_analyzer import RedirectChainResult, trace_redirect_
 
 from app.analyzers.tls_analyzer import TLSAnalysisResult, inspect_tls
 from app.analyzers.url_analyzer import URLFeatures, analyze_url_heuristics
+from app.analyzers.web3_analyzer import Web3Analyzer, Web3ThreatResult
 from app.correlation.correlation_engine import CorrelationEngine, CorrelationResult
+
 from app.correlation.fingerprint import FingerprintData, build_fingerprint
 from app.db.models.correlation import Correlation
 from app.db.models.dns_record import DNSRecord
@@ -200,18 +202,20 @@ class ScanService:
             scan.status = "in_progress"
             await session.commit()
 
-            # 1. URL Heuristics, Punycode, Brand & DGA Analysis
+            # 1. URL Heuristics, Punycode, Brand, DGA & Web3 Analysis
             heuristics = analyze_url_heuristics(scan.normalized_url)
             puny_res = analyze_punycode_and_homographs(scan.domain)
             brand_engine = brand_analyzer or BrandAnalyzer()
             brand_res = brand_engine.analyze_domain(scan.domain)
             dga_res = analyze_dga(scan.domain)
+            web3_res = Web3Analyzer.analyze_url_and_content(scan.normalized_url)
 
             # 2. SSRF Check
             is_safe, ssrf_reason, resolved_ips = await validate_url_safety(
                 scan.normalized_url,
                 allow_private_in_testing=allow_private_in_testing,
             )
+
 
 
             dns_res: Optional[DNSAnalysisResult] = None
@@ -415,7 +419,9 @@ class ScanService:
                 brand_res=brand_res,
                 puny_res=puny_res,
                 dga_res=dga_res,
+                web3_res=web3_res,
             )
+
 
 
             confidence_score = calculate_confidence_score(

@@ -33,11 +33,15 @@ def build_scan_keyboard(scan_uuid: str, domain: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🕸 Campaign Graph", callback_data=f"graph:{scan_uuid}"),
             ],
             [
-                InlineKeyboardButton("👁 Watch for Drift", callback_data=f"watch:{domain}"),
-                InlineKeyboardButton("🔄 Re-Scan", callback_data=f"rescan:{scan_uuid}"),
+                InlineKeyboardButton("📦 STIX 2.1 JSON", callback_data=f"stix:{scan_uuid}"),
+                InlineKeyboardButton("👁 Watch Drift", callback_data=f"watch:{domain}"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Re-Scan Target", callback_data=f"rescan:{scan_uuid}"),
             ],
         ]
     )
+
 
 
 def format_start_message() -> str:

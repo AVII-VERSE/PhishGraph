@@ -129,3 +129,34 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                 url = scan_details["scan"].original_url
                 await process_target_url(update, url)
         return
+
+    # 5. STIX 2.1 JSON Export: "stix:<scan_uuid>"
+    elif data.startswith("stix:"):
+        scan_uuid = data.split(":", 1)[1]
+        await query.answer("Exporting OASIS STIX 2.1 JSON bundle...")
+
+        from app.reports.stix_exporter import export_scan_to_stix
+
+        session_factory = async_session_factory()
+        async with session_factory() as session:
+            scan_details = await ScanService.get_scan_full_details(session, scan_uuid)
+            if not scan_details:
+                if query.message:
+                    await query.message.reply_text(f"❌ Scan `{scan_uuid}` not found.")
+                return
+
+            stix_json_str = export_scan_to_stix(scan_details)
+            if query.message:
+                await query.message.reply_document(
+                    document=stix_json_str.encode("utf-8"),
+                    filename=f"PhishGraph_STIX21_{scan_uuid}.json",
+                    caption=(
+                        f"📦 *STIX 2.1 Threat Intelligence Bundle*\n"
+                        f"*Scan ID:* `{scan_uuid}`\n"
+                        f"*Target:* `{scan_details['scan'].domain}`\n"
+                        f"_Standardized OASIS threat sharing bundle for SIEM / SOAR ingestion._"
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+        return
+
