@@ -416,3 +416,16 @@ def generate_pdf_report(scan_data: Dict[str, Any]) -> bytes:
 
     doc.build(elements)
     return buffer.getvalue()
+
+
+class ReportGenerator:
+    """Class wrapper for report generation functions."""
+
+    @staticmethod
+    def generate_html_report(scan_data: Dict[str, Any]) -> str:
+        return generate_html_report(scan_data)
+
+    @staticmethod
+    def generate_pdf_report(scan_data: Dict[str, Any]) -> bytes:
+        return generate_pdf_report(scan_data)
+
