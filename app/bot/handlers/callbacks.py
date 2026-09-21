@@ -160,3 +160,43 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                 )
         return
 
+    # 6. Isolated Sandbox Screenshot: "snap:<scan_uuid>"
+    elif data.startswith("snap:"):
+        scan_uuid = data.split(":", 1)[1]
+        await query.answer("Rendering isolated browser sandbox view...")
+
+        from app.analyzers.screenshot_analyzer import HeadlessScreenshotAnalyzer
+
+        session_factory = async_session_factory()
+        async with session_factory() as session:
+            scan_details = await ScanService.get_scan_full_details(session, scan_uuid)
+            if not scan_details or not query.message:
+                return
+
+            url = scan_details["scan"].normalized_url or scan_details["scan"].original_url
+            analyzer = HeadlessScreenshotAnalyzer()
+            res = await analyzer.capture(url)
+
+            if res.success and res.image_bytes:
+                await query.message.reply_photo(
+                    photo=res.image_bytes,
+                    caption=(
+                        f"📸 *Isolated Sandbox Preview*\n"
+                        f"🌐 *Target:* `{scan_details['scan'].domain}`\n"
+                        f"🏷️ *Page Title:* _{res.page_title or 'No Title'}_\n\n"
+                        f"⚠️ _Rendered in an isolated container without running active client-side exploits on your device._"
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            else:
+                await query.message.reply_text(
+                    text=(
+                        f"⚠️ *Sandbox View Unavailable*\n"
+                        f"Could not render safe preview: {res.error or 'Target host rejected headless connection.'}\n"
+                        f"_Note: Phishing hosts frequently drop connections or cloaking filters block automated inspection._"
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+        return
+
+
