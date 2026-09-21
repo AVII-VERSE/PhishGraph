@@ -87,3 +87,28 @@ async def get_scan_graph(scan_uuid: str) -> Dict[str, Any]:
             )
         return CampaignGraphService.build_scan_graph(details)
 
+
+@router.get(
+    "/{scan_uuid}/stix",
+    summary="Export STIX 2.1 Threat Intelligence Bundle",
+    description="Generates an OASIS compliant STIX 2.1 JSON bundle representing scan indicators and MITRE tactics.",
+)
+async def get_scan_stix(scan_uuid: str) -> Response:
+    from app.reports.stix_exporter import export_scan_to_stix
+
+    session_factory = async_session_factory()
+    async with session_factory() as session:
+        details = await ScanService.get_scan_full_details(session, scan_uuid)
+        if not details:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Scan with ID '{scan_uuid}' was not found.",
+            )
+        stix_json = export_scan_to_stix(details)
+        return Response(
+            content=stix_json,
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=PhishGraph_STIX_{scan_uuid}.json"},
+        )
+
+

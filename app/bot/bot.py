@@ -117,7 +117,13 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     # Register QR code image handler (Section 5.8)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, qr_image_handler))
 
+    # Register Telegram Inline Query Handler (@BotUsername <url>)
+    from app.bot.handlers.inline import inline_query_handler
+    from telegram.ext import InlineQueryHandler
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+
     return app
+
 
 
 def run_bot() -> None:
