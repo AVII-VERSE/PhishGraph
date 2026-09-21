@@ -99,3 +99,8 @@ class CampaignGraphService:
                 "total_edges": len(edges),
             },
         }
+
+
+# Alias for backward compatibility across handlers
+GraphService = CampaignGraphService
+
