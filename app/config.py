@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_PROXY_URL: Optional[str] = None
+    SUPER_USER_TELEGRAM_ID: Optional[int] = None  # Admin-only super user Telegram numeric ID
 
     # Database & Cache
     DATABASE_URL: str = "sqlite+aiosqlite:///./phishgraph.db"

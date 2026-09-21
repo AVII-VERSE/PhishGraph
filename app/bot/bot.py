@@ -15,6 +15,7 @@ from app.bot.handlers.history import history_handler
 from app.bot.handlers.qr import qr_image_handler
 from app.bot.handlers.report import report_command
 from app.bot.handlers.start import help_handler, start_handler
+from app.bot.handlers.superuser import phishreport_command
 from app.bot.handlers.watch import unwatch_command, watch_command, watchlist_command
 from app.config import get_settings
 from app.db.session import init_db
@@ -58,6 +59,7 @@ async def set_bot_profile(app: Application) -> None:
             BotCommand("watchlist", "Inspect actively monitored drift targets"),
             BotCommand("report", "Download executive PDF dossier: /report <scan_id>"),
             BotCommand("graph", "Generate Cytoscape campaign graph data"),
+            BotCommand("phishreport", "🔐 [Admin] Phishing Awareness PDF: /phishreport <scan_id>"),
         ]
         await app.bot.set_my_commands(commands)
         logger.info("Successfully updated Telegram bot profile descriptions and command menu.")
@@ -104,7 +106,7 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     app.add_handler(CommandHandler("unwatch", unwatch_command))
     app.add_handler(CommandHandler("watchlist", watchlist_command))
     app.add_handler(CommandHandler("graph", graph_command))
-
+    app.add_handler(CommandHandler("phishreport", phishreport_command))
 
     # Register Interactive Callback Button Handler
     from app.bot.handlers.callbacks import callback_query_handler
