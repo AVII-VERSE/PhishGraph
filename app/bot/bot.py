@@ -23,6 +23,48 @@ from app.logging import get_logger, setup_logging
 logger = get_logger("phishgraph.bot")
 
 
+async def set_bot_profile(app: Application) -> None:
+    """Configure bot profile description, about text, and slash command menu."""
+    from telegram import BotCommand
+
+    try:
+        # 1. Short Description (shown on profile preview card)
+        await app.bot.set_my_short_description(
+            "🛡️ PhishGraph: AI-driven cyber threat intelligence, phishing defense, brand spoofing & campaign correlation bot."
+        )
+
+        # 2. Full Description (shown when a user opens the chat before pressing Start)
+        await app.bot.set_my_description(
+            "🛡️ *Welcome to PhishGraph Cybersecurity Platform!*\n\n"
+            "An enterprise-grade defensive security intelligence bot.\n\n"
+            "⚡ *What PhishGraph Does:*\n"
+            "• 🔍 Instant deep URL heuristics & entropy analysis\n"
+            "• 🏷️ Brand impersonation & typosquatting detection\n"
+            "• 🎯 MITRE ATT&CK® matrix mapping\n"
+            "• 📡 Multi-feed Threat Radar (VirusTotal, ThreatFox, URLhaus, OTX, GSB, AbuseIPDB)\n"
+            "• 🌐 Infrastructure reconnaissance (DNS, GeoIP, ASN, RDAP)\n"
+            "• 🕸️ Campaign fingerprint correlation (Favicon, SSL serials)\n"
+            "• 📄 Executive PDF Threat Dossier export\n"
+            "• 👁️ Continuous drift monitoring\n\n"
+            "👉 Send any link, forward a suspicious email, or send a QR code image to begin!"
+        )
+
+        # 3. Interactive Bot Command Menu
+        commands = [
+            BotCommand("start", "Launch PhishGraph welcome dashboard"),
+            BotCommand("help", "View complete guide & command directory"),
+            BotCommand("analyze", "Execute multi-engine security assessment: /analyze <url>"),
+            BotCommand("history", "View recent investigation timeline"),
+            BotCommand("watchlist", "Inspect actively monitored drift targets"),
+            BotCommand("report", "Download executive PDF dossier: /report <scan_id>"),
+            BotCommand("graph", "Generate Cytoscape campaign graph data"),
+        ]
+        await app.bot.set_my_commands(commands)
+        logger.info("Successfully updated Telegram bot profile descriptions and command menu.")
+    except Exception as exc:
+        logger.warning(f"Could not update bot profile settings: {exc}")
+
+
 def build_bot_app(token: Optional[str] = None) -> Application:
     """Construct and configure the python-telegram-bot Application."""
     settings = get_settings()
@@ -44,7 +86,13 @@ def build_bot_app(token: Optional[str] = None) -> Application:
 
     request_client = HTTPXRequest(**request_kwargs)
 
-    app = ApplicationBuilder().token(bot_token).request(request_client).build()
+    app = (
+        ApplicationBuilder()
+        .token(bot_token)
+        .request(request_client)
+        .post_init(set_bot_profile)
+        .build()
+    )
 
     # Register Command Handlers
     app.add_handler(CommandHandler("start", start_handler))
@@ -56,6 +104,7 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     app.add_handler(CommandHandler("unwatch", unwatch_command))
     app.add_handler(CommandHandler("watchlist", watchlist_command))
     app.add_handler(CommandHandler("graph", graph_command))
+
 
     # Register Interactive Callback Button Handler
     from app.bot.handlers.callbacks import callback_query_handler

@@ -116,33 +116,41 @@ def format_scan_result(
     risk_score = float(scan.risk_score or 0.0)
     conf_score = float(scan.confidence_score or 0.0)
 
+    # Modern SOC Threat Card Framing
     if risk_score >= 75 or scan.risk_level == "CRITICAL":
         risk_badge = "🚨 CRITICAL"
-        risk_bar = f"[ 🟥 {make_meter(risk_score)} ]"
+        risk_bar = f"🟥 [{make_meter(risk_score)}] `{int(risk_score)}/100`"
+        shield_icon = "🛑"
     elif risk_score >= 50 or scan.risk_level == "HIGH":
         risk_badge = "🔴 HIGH"
-        risk_bar = f"[ 🟧 {make_meter(risk_score)} ]"
+        risk_bar = f"🟧 [{make_meter(risk_score)}] `{int(risk_score)}/100`"
+        shield_icon = "⚠️"
     elif risk_score >= 25 or scan.risk_level == "MODERATE":
         risk_badge = "🟡 MODERATE"
-        risk_bar = f"[ 🟨 {make_meter(risk_score)} ]"
+        risk_bar = f"🟨 [{make_meter(risk_score)}] `{int(risk_score)}/100`"
+        shield_icon = "⚡"
     else:
         risk_badge = "🟢 LOW"
-        risk_bar = f"[ 🟩 {make_meter(risk_score)} ]"
+        risk_bar = f"🟩 [{make_meter(risk_score)}] `{int(risk_score)}/100`"
+        shield_icon = "🛡️"
 
-    conf_bar = f"[ 🛡️ {make_meter(conf_score)} ]"
+    conf_bar = f"🛡️ [{make_meter(conf_score)}] `{int(conf_score)}/100`"
 
     sections = [
-        "🛡️ *PHISHGRAPH ANALYSIS*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        f"🎯 *Target:* `{scan.normalized_url or scan.original_url}`",
+        "╔══════════════════════════════╗",
+        f"  {shield_icon} *PHISHGRAPH ANALYSIS & CYBER INTEL*  ",
+        "╚══════════════════════════════╝",
+        f"🌐 *Target URL:* `{scan.normalized_url or scan.original_url}`",
         f"🆔 *Scan ID:* `{scan.scan_uuid}`",
-        "",
+        "──────────────────────────────",
         "📊 *THREAT RISK EVALUATION*",
         f"• *Threat Level:* {risk_badge}",
-        f"• *Risk Score:* `{int(risk_score)}/100`  {risk_bar}",
-        f"• *Confidence:* `{int(conf_score)}/100`  {conf_bar}",
-        "──────────────────────",
+        f"• *Risk Score:* {risk_bar}",
+        f"• *Confidence:* {conf_bar}",
+        "──────────────────────────────",
     ]
+
+
 
     # Brand / Impersonation Alert
     if brand_res and brand_res.has_brand_impersonation:
