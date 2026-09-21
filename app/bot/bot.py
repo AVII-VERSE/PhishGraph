@@ -32,12 +32,17 @@ def build_bot_app(token: Optional[str] = None) -> Application:
         raise ValueError("TELEGRAM_BOT_TOKEN is not configured in environment or .env file.")
 
     from telegram.request import HTTPXRequest
-    request_client = HTTPXRequest(
-        connect_timeout=30.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=30.0,
-    )
+    proxy_url = getattr(settings, "TELEGRAM_PROXY_URL", None)
+    request_kwargs = {
+        "connect_timeout": 30.0,
+        "read_timeout": 30.0,
+        "write_timeout": 30.0,
+        "pool_timeout": 30.0,
+    }
+    if proxy_url:
+        request_kwargs["proxy"] = proxy_url
+
+    request_client = HTTPXRequest(**request_kwargs)
 
     app = ApplicationBuilder().token(bot_token).request(request_client).build()
 
@@ -51,6 +56,11 @@ def build_bot_app(token: Optional[str] = None) -> Application:
     app.add_handler(CommandHandler("unwatch", unwatch_command))
     app.add_handler(CommandHandler("watchlist", watchlist_command))
     app.add_handler(CommandHandler("graph", graph_command))
+
+    # Register Interactive Callback Button Handler
+    from app.bot.handlers.callbacks import callback_query_handler
+    from telegram.ext import CallbackQueryHandler
+    app.add_handler(CallbackQueryHandler(callback_query_handler))
 
     # Register URL message auto-detection handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, url_message_handler))

@@ -33,6 +33,12 @@ class DNSAnalysisResult(BaseModel):
     signals: List[str] = Field(default_factory=list)
     has_a_record: bool = False
     has_mx_record: bool = False
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    flag_emoji: Optional[str] = None
+    isp: Optional[str] = None
+    org: Optional[str] = None
+    city: Optional[str] = None
 
 
 async def query_record_type(

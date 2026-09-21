@@ -60,6 +60,8 @@ class URLFeatures(BaseModel):
     has_at_symbol: bool
     has_double_slash_in_path: bool
     has_punycode: bool
+    is_high_abuse_tld: bool = False
+    has_brand_subdomain: bool = False
     path_entropy: float
     query_entropy: float
     suspicious_keywords_found: List[str] = Field(default_factory=list)
@@ -104,10 +106,34 @@ def analyze_url_heuristics(
     haystack = f"{hostname} {unquote(path)} {unquote(query)}".lower()
     found_keywords = [kw for kw in keywords if kw in haystack]
 
+    # High-abuse TLD check
+    HIGH_ABUSE_TLDS = {
+        ".top", ".xyz", ".buzz", ".work", ".club", ".fit", ".gq", ".tk", ".ml",
+        ".cf", ".ga", ".click", ".surf", ".monster", ".live", ".icu", ".cam",
+        ".sbs", ".cyou", ".shop", ".online", ".site", ".country", ".kim", ".rest"
+    }
+    is_abuse_tld = any(hostname.endswith(tld) for tld in HIGH_ABUSE_TLDS)
+
+    # Brand in subdomain check
+    COMMON_BRAND_NAMES = {
+        "paypal", "google", "microsoft", "apple", "amazon", "netflix",
+        "chase", "bankofamerica", "binance", "coinbase", "metamask",
+        "facebook", "instagram", "whatsapp", "telegram", "dhl", "fedex"
+    }
+    has_brand_sub = False
+    if len(subdomains) > 2:
+        sub_prefix = " ".join(subdomains[:-2])
+        if any(b in sub_prefix for b in COMMON_BRAND_NAMES):
+            has_brand_sub = True
+
     # Flags & signals
     signals: List[str] = []
     if is_ip:
         signals.append("IP-address used as hostname")
+    if is_abuse_tld:
+        signals.append("High-abuse / suspicious top-level domain (TLD)")
+    if has_brand_sub:
+        signals.append("Brand name disguised inside subdomain structure")
     if has_at:
         signals.append("@ symbol present in URL (possible credential masking)")
     if has_double_slash:
@@ -139,6 +165,8 @@ def analyze_url_heuristics(
         has_at_symbol=has_at,
         has_double_slash_in_path=has_double_slash,
         has_punycode=has_punycode,
+        is_high_abuse_tld=is_abuse_tld,
+        has_brand_subdomain=has_brand_sub,
         path_entropy=path_entropy,
         query_entropy=query_entropy,
         suspicious_keywords_found=sorted(found_keywords),

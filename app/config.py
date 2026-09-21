@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_PROXY_URL: Optional[str] = None
 
     # Database & Cache
     DATABASE_URL: str = "sqlite+aiosqlite:///./phishgraph.db"

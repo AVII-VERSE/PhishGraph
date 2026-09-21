@@ -117,10 +117,21 @@ async def qr_image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 correlation_res=correlation_res,
             )
 
+            from app.bot.formatters.scan_result import build_scan_keyboard
+            keyboard = build_scan_keyboard(scan.scan_uuid, scan.domain)
+
             try:
-                await ack_msg.edit_text(text=report_text, parse_mode=ParseMode.MARKDOWN)
+                await ack_msg.edit_text(
+                    text=report_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard,
+                )
             except Exception:
-                await update.effective_message.reply_text(text=report_text, parse_mode=ParseMode.MARKDOWN)
+                await update.effective_message.reply_text(
+                    text=report_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard,
+                )
 
     except Exception as exc:
         logger.error(f"Error handling QR code image: {exc}", exc_info=True)

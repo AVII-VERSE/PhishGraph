@@ -182,6 +182,28 @@ def calculate_risk_score(
         )
         total_score += WEIGHT_HIGH_URL_ENTROPY
 
+    if getattr(heuristics, "is_high_abuse_tld", False):
+        factors.append(
+            RiskFactorItem(
+                factor_code="HIGH_ABUSE_TLD",
+                factor_description="High-abuse top-level domain frequently linked to phishing",
+                weight=10.0,
+                evidence_source="url_heuristics",
+            )
+        )
+        total_score += 10.0
+
+    if getattr(heuristics, "has_brand_subdomain", False):
+        factors.append(
+            RiskFactorItem(
+                factor_code="BRAND_SUBDOMAIN_SPOOF",
+                factor_description="Brand keyword disguised in subdomain structure",
+                weight=18.0,
+                evidence_source="url_heuristics",
+            )
+        )
+        total_score += 18.0
+
     # 6. TLS Indicators
     if tls_res:
         if tls_res.is_self_signed:
